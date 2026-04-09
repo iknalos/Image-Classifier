@@ -19,13 +19,15 @@ from sklearn.decomposition import PCA
 import joblib
 
 try:
-    from google_auth_oauthlib.flow import Flow
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseDownload
     from google.oauth2.credentials import Credentials
     GOOGLE_AVAILABLE = True
 except ImportError:
     GOOGLE_AVAILABLE = False
+
+import urllib.parse
+import requests as req_lib
 
 # ── Page config ──
 st.set_page_config(page_title="🍷 Wine Classifier", page_icon="🍷",
@@ -85,19 +87,17 @@ def build_flow():
     if not c:
         return None
     try:
+        # Use redirect_uri exactly from secrets — no hardcoding
         redirect = c["redirect_uri"].strip()
         cfg = {"web": {
-            "client_id":     c["client_id"],
+            "client_id": c["client_id"],
             "client_secret": c["client_secret"],
             "redirect_uris": [redirect],
-            "auth_uri":  "https://accounts.google.com/o/oauth2/auth",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
         }}
-        flow = Flow.from_client_config(cfg, scopes=SCOPES, redirect_uri=redirect)
-        flow.redirect_uri = redirect
-        # Disable PKCE — code_verifier can't survive the Google redirect
-        flow.code_challenge_method = None
-        return flow
+        return Flow.from_client_config(cfg, scopes=SCOPES,
+                                       redirect_uri=redirect)
     except Exception as e:
         st.error(f"Flow error: {e}")
         return None
@@ -140,24 +140,18 @@ def download_drive_file(service, file_id):
 try:
     params = st.query_params
     if 'code' in params and st.session_state.gdrive_token is None:
-        flow = build_flow()
-        if flow:
-            try:
-                # Build full authorization response URL
-                full_url = st.secrets.auth.redirect_uri + "?" + \
-                    "&".join([f"{k}={v}" for k, v in params.items()])
-                flow.fetch_token(authorization_response=full_url)
-                t = flow.credentials
-                st.session_state.gdrive_token = {
-                    'access_token':  t.token,
-                    'refresh_token': t.refresh_token,
-                }
-                st.query_params.clear()
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Auth failed: {e}")
-except Exception:
-    pass
+        token_data = fetch_token(params['code'])
+        if 'access_token' in token_data:
+            st.session_state.gdrive_token = {
+                'access_token':  token_data['access_token'],
+                'refresh_token': token_data.get('refresh_token'),
+            }
+            st.query_params.clear()
+            st.rerun()
+        else:
+            st.sidebar.error(f"Token error: {token_data.get('error_description', token_data)}")
+except Exception as e:
+    st.sidebar.error(f"OAuth error: {e}")
 
 # ── Core helpers ──
 def get_label(name):
@@ -288,12 +282,8 @@ with st.sidebar:
     elif gcreds is None:
         st.caption("Add Google credentials in Streamlit secrets to enable Drive.")
     elif st.session_state.gdrive_token is None:
-        flow = build_flow()
-        if flow:
-            auth_url, _ = flow.authorization_url(
-                prompt='consent',
-                access_type='offline',
-                include_granted_scopes='true')
+        auth_url = get_auth_url()
+        if auth_url:
             st.link_button(
                 "🔗 Connect Google Drive",
                 auth_url,
