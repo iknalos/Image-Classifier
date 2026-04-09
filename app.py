@@ -265,7 +265,7 @@ if st.session_state.step == 0:
         st.markdown("""
         **Camera & Format**
         This app is designed for the **Basler daA2500** camera with a
-        **9×9 mosaic spectral filter** (81 bands). Images must be raw `.tiff` files
+        **9x9 filter** (81 bands). Images must be raw `.tiff` files
         — do not convert to JPEG or PNG as this destroys the spectral data.
 
         **How many images per wine?**
