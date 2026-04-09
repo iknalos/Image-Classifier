@@ -1,0 +1,7 @@
+streamlit
+tifffile
+numpy
+scikit-learn
+matplotlib
+scipy
+joblib
