@@ -147,23 +147,24 @@ try:
                     'access_token':  t.token,
                     'refresh_token': t.refresh_token,
                 }
-            except Exception:
-                full_url = (st.secrets.auth.redirect_uri +
-                           "?code=" + params['code'] +
-                           ("&state=" + params['state'] if 'state' in params else ""))
-                flow2 = build_flow()
-                flow2.fetch_token(authorization_response=full_url)
-                t = flow2.credentials
-                st.session_state.gdrive_token = {
-                    'access_token':  t.token,
-                    'refresh_token': t.refresh_token,
-                }
-            st.query_params.clear()
-            # Redirect back to root after successful OAuth
-            st.markdown(
-                '<script>window.top.location.href = "https://wine-classifier.streamlit.app/"</script>',
-                unsafe_allow_html=True)
-            st.rerun()
+                st.query_params.clear()
+                st.rerun()
+            except Exception as e:
+                try:
+                    full_url = (st.secrets.auth.redirect_uri +
+                               "?code=" + params['code'] +
+                               ("&state=" + params['state'] if 'state' in params else ""))
+                    flow2 = build_flow()
+                    flow2.fetch_token(authorization_response=full_url)
+                    t = flow2.credentials
+                    st.session_state.gdrive_token = {
+                        'access_token':  t.token,
+                        'refresh_token': t.refresh_token,
+                    }
+                    st.query_params.clear()
+                    st.rerun()
+                except Exception as e2:
+                    st.sidebar.error(f"Auth failed: {e2}")
 except Exception:
     pass
 
