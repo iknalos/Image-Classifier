@@ -195,14 +195,19 @@ def can_advance(to_step):
 #  SIDEBAR
 # ============================================================
 with st.sidebar:
-    st.write("Secrets:", list(st.secrets.keys()))
-    if "auth" in st.secrets:
-        st.write("Auth keys:", list(st.secrets["auth"].keys()))
-        st.write("Google available:", GOOGLE_AVAILABLE)
-        creds = get_google_creds()
-        st.write("Creds result:", creds)
-    else:
-        st.write("❌ No [auth] section")
+    # TEMPORARY DEBUG
+    try:
+        s = st.secrets["auth"]
+        st.write("client_id:", s.get("client_id", "MISSING"))
+        st.write("client_secret:", "EXISTS" if "client_secret" in s else "MISSING")
+        st.write("redirect_uri:", s.get("redirect_uri", "MISSING"))
+        required = ["client_id","client_secret","redirect_uri"]
+        check = all(k in s for k in required)
+        st.write("All required keys present:", check)
+    except Exception as e:
+        st.write("Exception:", str(e))
+    
+    st.markdown("## 🍷 Wine Classifier")
     
     st.markdown("## 🍷 Wine Classifier")
     st.markdown("---")
