@@ -131,6 +131,119 @@ with st.sidebar:
     st.markdown("## 🍷 Wine Classifier")
     st.markdown("---")
 
+    # ── Google Drive Panel ──
+    st.markdown("### ☁️ Google Drive")
+    gcreds = get_google_creds()
+
+    if not gcreds:
+        st.caption("Add Google credentials in Streamlit secrets to enable Drive.")
+
+    elif st.session_state.gdrive_token is None:
+        # Not logged in
+        flow = build_flow()
+        auth_url, _ = flow.authorization_url(
+            prompt='consent', access_type='offline')
+        st.markdown(
+            f"<a href='{auth_url}' target='_self'>"
+            f"<button style='background:#4285F4;color:white;border:none;"
+            f"padding:8px 16px;border-radius:6px;cursor:pointer;width:100%;"
+            f"font-size:14px;font-weight:600'>🔗 Connect Google Drive</button>"
+            f"</a>", unsafe_allow_html=True)
+        st.caption("Connect once — browse and import files directly from Drive.")
+
+    else:
+        # Logged in — show file browser
+        st.success("✅ Drive connected")
+        if st.button("🔓 Disconnect Drive", use_container_width=True):
+            st.session_state.gdrive_token   = None
+            st.session_state.gdrive_folder_id   = 'root'
+            st.session_state.gdrive_folder_name = 'My Drive'
+            st.session_state.gdrive_breadcrumb  = [('root','My Drive')]
+            st.rerun()
+
+        # Breadcrumb navigation
+        bc = st.session_state.gdrive_breadcrumb
+        bc_text = " › ".join([name for _, name in bc])
+        st.caption(f"📂 {bc_text}")
+
+        # Back button
+        if len(bc) > 1:
+            if st.button("⬆️ Back", use_container_width=True):
+                st.session_state.gdrive_breadcrumb.pop()
+                st.session_state.gdrive_folder_id   = bc[-2][0]
+                st.session_state.gdrive_folder_name = bc[-2][1]
+                st.rerun()
+
+        # List folder contents
+        try:
+            service = get_drive_service()
+            items   = list_drive_folder(service, st.session_state.gdrive_folder_id)
+
+            folders = [i for i in items if i['mimeType'] == 'application/vnd.google-apps.folder']
+            tiffs   = [i for i in items if i['mimeType'] != 'application/vnd.google-apps.folder']
+
+            # Folders
+            for folder in folders:
+                if st.button(f"📁 {folder['name']}", key=f"fd_{folder['id']}",
+                             use_container_width=True):
+                    st.session_state.gdrive_breadcrumb.append(
+                        (folder['id'], folder['name']))
+                    st.session_state.gdrive_folder_id   = folder['id']
+                    st.session_state.gdrive_folder_name = folder['name']
+                    st.rerun()
+
+            # TIFF files
+            if tiffs:
+                st.markdown("**TIFF files:**")
+                for f in tiffs:
+                    size_kb = int(f.get('size', 0)) // 1024
+                    c1, c2 = st.columns([4,1])
+                    lbl    = get_label(f['name'])
+                    col    = WINE_COLORS.get(lbl, '#555')
+                    c1.markdown(
+                        f"<div style='font-size:11px;padding:2px 0'>"
+                        f"<span style='background:{col};color:white;padding:1px 5px;"
+                        f"border-radius:6px;font-size:10px'>{lbl}</span> "
+                        f"{f['name'][:20]}{'…' if len(f['name'])>20 else ''} "
+                        f"<span style='color:#888'>({size_kb}KB)</span></div>",
+                        unsafe_allow_html=True)
+                    if c2.button("➕", key=f"add_{f['id']}",
+                                 help=f"Add {f['name']} to training"):
+                        with st.spinner(f"Downloading {f['name']}..."):
+                            data = download_drive_file(service, f['id'])
+                            existing = [n for n,_ in st.session_state.tiff_files]
+                            if f['name'] not in existing:
+                                st.session_state.tiff_files.append((f['name'], data))
+                                st.session_state.file_labels[f['name']] = get_label(f['name'])
+                                st.toast(f"✅ Added {f['name']}", icon="✅")
+                                st.rerun()
+
+                # Add all TIFFs in folder at once
+                if len(tiffs) > 1:
+                    if st.button(f"➕ Add all {len(tiffs)} TIFFs",
+                                 use_container_width=True, type="primary"):
+                        added = 0
+                        existing = [n for n,_ in st.session_state.tiff_files]
+                        prog = st.progress(0)
+                        for i, f in enumerate(tiffs):
+                            if f['name'] not in existing:
+                                data = download_drive_file(service, f['id'])
+                                st.session_state.tiff_files.append((f['name'], data))
+                                st.session_state.file_labels[f['name']] = get_label(f['name'])
+                                added += 1
+                            prog.progress((i+1)/len(tiffs))
+                        st.toast(f"✅ Added {added} files", icon="✅")
+                        st.rerun()
+            else:
+                if not folders:
+                    st.caption("No TIFF files or folders found here.")
+
+        except Exception as e:
+            st.error(f"Drive error: {e}")
+            st.session_state.gdrive_token = None
+
+    st.markdown("---")
+
     # ── Step navigation ──
     step_labels = ["1  Upload Data", "2  Select ROI",
                    "3  Train Model", "4  Predict"]
@@ -265,7 +378,7 @@ if st.session_state.step == 0:
         st.markdown("""
         **Camera & Format**
         This app is designed for the **Basler daA2500** camera with a
-        **9x9 filter** (81 bands). Images must be raw `.tiff` files
+        **9×9 mosaic spectral filter** (81 bands). Images must be raw `.tiff` files
         — do not convert to JPEG or PNG as this destroys the spectral data.
 
         **How many images per wine?**
