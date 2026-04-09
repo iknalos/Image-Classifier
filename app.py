@@ -34,13 +34,152 @@ st.set_page_config(page_title="🍷 Wine Classifier", page_icon="🍷",
 
 st.markdown("""
 <style>
-.step-header {
-    background: linear-gradient(90deg, #1a1a2e, #16213e);
-    color: white; padding: 16px 20px; border-radius: 10px;
-    margin-bottom: 20px; border-left: 4px solid #e94560;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
 }
-.step-header h2 { margin: 0; font-size: 22px; }
-.step-header p  { margin: 4px 0 0 0; opacity: 0.7; font-size: 13px; }
+
+/* Hide Streamlit chrome */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+a[href*="github.com"] {display: none !important;}
+[data-testid="stToolbarActions"] {display: none !important;}
+[data-testid="stHeader"] {background: transparent;}
+
+/* Main background */
+.stApp { background: #0a0a0f; }
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0f0f1a 0%, #12121f 100%);
+    border-right: 1px solid #1e1e30;
+}
+
+/* Step header */
+.step-header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: white; padding: 24px 28px; border-radius: 16px;
+    margin-bottom: 24px;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    position: relative; overflow: hidden;
+}
+.step-header::before {
+    content: '';
+    position: absolute; top: 0; left: 0;
+    width: 4px; height: 100%;
+    background: linear-gradient(180deg, #e94560, #c23152);
+}
+.step-header h2 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+.step-header p  { margin: 6px 0 0 0; opacity: 0.6; font-size: 13px; font-weight: 400; }
+
+/* Cards */
+.metric-card {
+    background: linear-gradient(135deg, #13131f, #1a1a2e);
+    border: 1px solid #1e1e35;
+    border-radius: 12px; padding: 16px 20px;
+    text-align: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    transition: transform 0.2s, border-color 0.2s;
+}
+.metric-card:hover { transform: translateY(-2px); border-color: #e94560; }
+
+/* Buttons */
+[data-testid="stButton"] > button {
+    border-radius: 10px !important;
+    font-weight: 500 !important;
+    font-family: 'Inter', sans-serif !important;
+    transition: all 0.2s !important;
+}
+[data-testid="stButton"] > button:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(233,69,96,0.3) !important;
+}
+
+/* Primary buttons */
+[data-testid="stButton"] > button[kind="primary"] {
+    background: linear-gradient(135deg, #e94560, #c23152) !important;
+    border: none !important;
+    color: white !important;
+}
+
+/* File uploader */
+[data-testid="stFileUploader"] {
+    background: #13131f !important;
+    border: 2px dashed #2a2a40 !important;
+    border-radius: 12px !important;
+    transition: border-color 0.2s !important;
+}
+[data-testid="stFileUploader"]:hover {
+    border-color: #e94560 !important;
+}
+
+/* Tabs */
+[data-testid="stTabs"] [role="tab"] {
+    border-radius: 8px 8px 0 0 !important;
+    font-weight: 500 !important;
+}
+
+/* Expander */
+[data-testid="stExpander"] {
+    background: #13131f !important;
+    border: 1px solid #1e1e30 !important;
+    border-radius: 10px !important;
+}
+
+/* Progress bar */
+[data-testid="stProgressBar"] > div > div {
+    background: linear-gradient(90deg, #e94560, #c23152) !important;
+    border-radius: 4px !important;
+}
+
+/* Sidebar logo area */
+.sidebar-logo {
+    text-align: center;
+    padding: 8px 0 16px 0;
+}
+.sidebar-logo h1 {
+    font-size: 20px; font-weight: 700;
+    background: linear-gradient(135deg, #e94560, #ff6b6b);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin: 8px 0 2px 0;
+}
+.sidebar-logo p {
+    font-size: 11px; color: #555; margin: 0;
+    letter-spacing: 0.5px; text-transform: uppercase;
+}
+
+/* Wine badge */
+.wine-badge {
+    display: inline-block; padding: 2px 10px;
+    border-radius: 20px; font-size: 11px;
+    font-weight: 600; color: white;
+    letter-spacing: 0.3px;
+}
+
+/* Info box */
+.info-box {
+    background: linear-gradient(135deg, #13131f, #1a1a2e);
+    border: 1px solid #1e1e35; border-left: 3px solid #e94560;
+    border-radius: 10px; padding: 14px 16px; margin: 8px 0;
+    font-size: 13px;
+}
+
+/* Status badge */
+.status-connected {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #0d2b1f; border: 1px solid #1a5c3a;
+    color: #4caf7d; border-radius: 20px;
+    padding: 4px 12px; font-size: 12px; font-weight: 600;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: #0a0a0f; }
+::-webkit-scrollbar-thumb { background: #2a2a40; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #e94560; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -204,8 +343,14 @@ def can_advance(to_step):
 #  SIDEBAR
 # ============================================================
 with st.sidebar:
-    st.markdown("## 🍷 Wine Classifier")
-    st.markdown("---")
+    st.markdown("""
+    <div class='sidebar-logo'>
+        <div style='font-size:42px'>🍷</div>
+        <h1>Wine Classifier</h1>
+        <p>Hyperspectral Analysis</p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("<div style='height:1px;background:linear-gradient(90deg,transparent,#2a2a40,transparent);margin-bottom:16px'></div>", unsafe_allow_html=True)
 
     step_icons  = ["📁","🎯","🤖","🔍"]
     step_labels = ["1  Upload Data","2  Select ROI","3  Train Model","4  Predict"]
@@ -221,10 +366,17 @@ with st.sidebar:
             st.session_state.step = i
             st.rerun()
 
-    st.markdown("---")
+    st.markdown("<div style='height:1px;background:linear-gradient(90deg,transparent,#2a2a40,transparent);margin:16px 0'></div>", unsafe_allow_html=True)
     n_done = sum(step_done[:3])
+    st.markdown(f"""
+    <div style='padding:10px 4px'>
+        <div style='display:flex;justify-content:space-between;margin-bottom:6px'>
+            <span style='font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px'>Progress</span>
+            <span style='font-size:11px;color:#e94560;font-weight:600'>{n_done}/3 steps</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     st.progress(n_done/3)
-    st.caption(f"Progress: {n_done}/3 steps")
 
     if st.session_state.tiff_files:
         st.markdown("---")
