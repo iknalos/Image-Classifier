@@ -301,81 +301,6 @@ with st.sidebar:
             st.session_state.gdrive_breadcrumb  = [('root','My Drive')]
             st.rerun()
 
-        bc = st.session_state.gdrive_breadcrumb
-        st.caption("📂 " + " › ".join([n for _,n in bc]))
-
-        if len(bc) > 1:
-            if st.button("⬆️ Back", use_container_width=True):
-                st.session_state.gdrive_breadcrumb.pop()
-                st.session_state.gdrive_folder_id   = bc[-2][0]
-                st.session_state.gdrive_folder_name = bc[-2][1]
-                st.rerun()
-
-        try:
-            service = get_drive_service()
-            items   = list_drive_folder(service, st.session_state.gdrive_folder_id)
-            folders = [i for i in items
-                       if i['mimeType']=='application/vnd.google-apps.folder']
-            tiffs   = [i for i in items
-                       if i['mimeType']!='application/vnd.google-apps.folder']
-
-            for folder in folders:
-                if st.button(f"📁 {folder['name']}",
-                             key=f"fd_{folder['id']}",
-                             use_container_width=True):
-                    st.session_state.gdrive_breadcrumb.append(
-                        (folder['id'], folder['name']))
-                    st.session_state.gdrive_folder_id   = folder['id']
-                    st.session_state.gdrive_folder_name = folder['name']
-                    st.rerun()
-
-            if tiffs:
-                st.markdown("**TIFF files:**")
-                for f in tiffs:
-                    size_kb = int(f.get('size',0))//1024
-                    c1,c2   = st.columns([4,1])
-                    lbl     = get_label(f['name'])
-                    col     = WINE_COLORS.get(lbl,'#555')
-                    c1.markdown(
-                        f"<div style='font-size:11px;padding:2px 0'>"
-                        f"<span style='background:{col};color:white;"
-                        f"padding:1px 5px;border-radius:6px;font-size:10px'>"
-                        f"{lbl}</span> "
-                        f"{f['name'][:18]}{'…' if len(f['name'])>18 else ''} "
-                        f"<span style='color:#888'>({size_kb}KB)</span></div>",
-                        unsafe_allow_html=True)
-                    if c2.button("➕", key=f"add_{f['id']}"):
-                        with st.spinner("Downloading..."):
-                            data = download_drive_file(service, f['id'])
-                            existing = [n for n,_ in st.session_state.tiff_files]
-                            if f['name'] not in existing:
-                                st.session_state.tiff_files.append((f['name'], data))
-                                st.session_state.file_labels[f['name']] = lbl
-                                st.toast(f"✅ Added {f['name']}")
-                                st.rerun()
-
-                if len(tiffs) > 1:
-                    if st.button(f"➕ Add all {len(tiffs)} TIFFs",
-                                 use_container_width=True, type="primary"):
-                        existing = [n for n,_ in st.session_state.tiff_files]
-                        prog = st.progress(0)
-                        added = 0
-                        for i,f in enumerate(tiffs):
-                            if f['name'] not in existing:
-                                data = download_drive_file(service, f['id'])
-                                st.session_state.tiff_files.append((f['name'], data))
-                                st.session_state.file_labels[f['name']] = get_label(f['name'])
-                                added += 1
-                            prog.progress((i+1)/len(tiffs))
-                        st.toast(f"✅ Added {added} files")
-                        st.rerun()
-            elif not folders:
-                st.caption("No TIFF files or folders found here.")
-
-        except Exception as e:
-            st.error(f"Drive error: {e}")
-            st.session_state.gdrive_token = None
-
     st.markdown("---")
 
 # ============================================================
@@ -416,76 +341,126 @@ if st.session_state.step == 0:
             if st.session_state.gdrive_token is None:
                 st.info("🔗 Connect Google Drive from the sidebar first, then browse your folders here.")
             else:
-                # Folder browser inside Step 1
-                st.markdown("**📂 Browse your Google Drive:**")
-
-                # Breadcrumb
-                bc = st.session_state.gdrive_breadcrumb
-                st.caption("📂 " + " › ".join([n for _,n in bc]))
-
-                col_back, col_root = st.columns([1,1])
-                if len(bc) > 1:
-                    if col_back.button("⬆️ Back", key="s1_back"):
-                        st.session_state.gdrive_breadcrumb.pop()
-                        st.session_state.gdrive_folder_id = bc[-2][0]
-                        st.rerun()
-                if len(bc) > 1:
-                    if col_root.button("🏠 Root", key="s1_root"):
-                        st.session_state.gdrive_breadcrumb = [('root','My Drive')]
-                        st.session_state.gdrive_folder_id = 'root'
-                        st.rerun()
-
                 try:
                     service = get_drive_service()
+
+                    # ── Breadcrumb + nav ──
+                    bc = st.session_state.gdrive_breadcrumb
+                    bc_html = " › ".join(
+                        [f"<b>{n}</b>" if i==len(bc)-1 else n for i,(_, n) in enumerate(bc)])
+                    st.markdown(f"<small>📂 {bc_html}</small>", unsafe_allow_html=True)
+
+                    nav1, nav2, nav3 = st.columns([1,1,3])
+                    if len(bc) > 1:
+                        if nav1.button("⬆️ Up", key="s1_up", use_container_width=True):
+                            st.session_state.gdrive_breadcrumb.pop()
+                            st.session_state.gdrive_folder_id = bc[-2][0]
+                            st.rerun()
+                        if nav2.button("🏠", key="s1_home", use_container_width=True):
+                            st.session_state.gdrive_breadcrumb = [('root','My Drive')]
+                            st.session_state.gdrive_folder_id  = 'root'
+                            st.rerun()
+
+                    # ── Search ──
+                    search = nav3.text_input("🔍 Search files",
+                                             placeholder="type to filter...",
+                                             key="drive_search",
+                                             label_visibility='collapsed')
+
                     items   = list_drive_folder(service, st.session_state.gdrive_folder_id)
                     folders = [i for i in items
                                if i['mimeType']=='application/vnd.google-apps.folder']
                     tiffs   = [i for i in items
                                if i['mimeType']!='application/vnd.google-apps.folder']
 
-                    # Folders
-                    for folder in folders:
-                        if st.button(f"📁 {folder['name']}",
-                                     key=f"s1_fd_{folder['id']}",
-                                     use_container_width=True):
-                            st.session_state.gdrive_breadcrumb.append(
-                                (folder['id'], folder['name']))
-                            st.session_state.gdrive_folder_id = folder['id']
-                            st.rerun()
+                    # Apply search filter
+                    if search:
+                        folders = [f for f in folders
+                                   if search.lower() in f['name'].lower()]
+                        tiffs   = [f for f in tiffs
+                                   if search.lower() in f['name'].lower()]
 
-                    # TIFF files
+                    # ── Folders — compact grid ──
+                    if folders:
+                        st.markdown("<small><b>📁 Folders</b></small>", unsafe_allow_html=True)
+                        FCOLS = 3
+                        for row_start in range(0, len(folders), FCOLS):
+                            row_folders = folders[row_start:row_start+FCOLS]
+                            cols = st.columns(FCOLS)
+                            for ci, folder in enumerate(row_folders):
+                                name_short = folder['name'][:14] + ('…' if len(folder['name'])>14 else '')
+                                if cols[ci].button(f"📁 {name_short}",
+                                                   key=f"s1_fd_{folder['id']}",
+                                                   use_container_width=True,
+                                                   help=folder['name']):
+                                    st.session_state.gdrive_breadcrumb.append(
+                                        (folder['id'], folder['name']))
+                                    st.session_state.gdrive_folder_id = folder['id']
+                                    st.rerun()
+
+                    # ── TIFF files with pagination ──
                     if tiffs:
-                        st.markdown(f"**{len(tiffs)} TIFF file(s) in this folder:**")
+                        PAGE_SIZE = 15
+                        total_pages = max(1, (len(tiffs) + PAGE_SIZE - 1) // PAGE_SIZE)
+                        page_key = 'drive_page'
+                        if page_key not in st.session_state:
+                            st.session_state[page_key] = 0
+                        # Reset page on search change
+                        if search:
+                            st.session_state[page_key] = 0
+                        page     = st.session_state[page_key]
+                        page_tiffs = tiffs[page*PAGE_SIZE:(page+1)*PAGE_SIZE]
                         existing = [n for n,_ in st.session_state.tiff_files]
-                        for f in tiffs:
+
+                        st.markdown(
+                            f"<small><b>🖼️ TIFF Files</b> — "
+                            f"{len(tiffs)} total, showing {page*PAGE_SIZE+1}–"
+                            f"{min((page+1)*PAGE_SIZE, len(tiffs))}</small>",
+                            unsafe_allow_html=True)
+
+                        # File rows
+                        for f in page_tiffs:
                             size_kb = int(f.get('size',0))//1024
                             lbl     = get_label(f['name'])
                             col     = WINE_COLORS.get(lbl,'#555')
                             already = f['name'] in existing
-                            ca, cb  = st.columns([5,1])
+                            ca, cb  = st.columns([6,1])
                             ca.markdown(
-                                f"<div style='padding:4px 0'>"
-                                f"<span style='background:{col};color:white;padding:1px 8px;"
-                                f"border-radius:8px;font-size:11px'>{lbl}</span> "
-                                f"`{f['name'][:30]}` "
-                                f"<span style='color:#888;font-size:11px'>({size_kb}KB)</span>"
+                                f"<div style='padding:2px 0;font-size:12px'>"
+                                f"<span style='background:{col};color:white;"
+                                f"padding:1px 6px;border-radius:6px;font-size:10px'>{lbl}</span> "
+                                f"{f['name'][:32]}{'…' if len(f['name'])>32 else ''} "
+                                f"<span style='color:#666'>({size_kb}KB)</span>"
                                 f"{'  ✅' if already else ''}</div>",
                                 unsafe_allow_html=True)
                             if not already:
-                                if cb.button("➕", key=f"s1_add_{f['id']}"):
-                                    with st.spinner(f"Downloading {f['name']}..."):
+                                if cb.button("➕", key=f"s1_add_{f['id']}",
+                                             help=f"Add {f['name']}"):
+                                    with st.spinner(f"Downloading..."):
                                         data = download_drive_file(service, f['id'])
                                         st.session_state.tiff_files.append((f['name'], data))
                                         st.session_state.file_labels[f['name']] = lbl
                                         st.toast(f"✅ Added {f['name']}")
                                         st.rerun()
-                            else:
-                                cb.markdown("✅")
 
-                        # Add all button
+                        # Pagination controls
+                        if total_pages > 1:
+                            pc1, pc2, pc3 = st.columns([1,2,1])
+                            if pc1.button("◀ Prev", disabled=page==0,
+                                          key="s1_prev", use_container_width=True):
+                                st.session_state[page_key] -= 1; st.rerun()
+                            pc2.markdown(
+                                f"<div style='text-align:center;padding:6px;font-size:12px'>"
+                                f"Page {page+1} / {total_pages}</div>",
+                                unsafe_allow_html=True)
+                            if pc3.button("Next ▶", disabled=page>=total_pages-1,
+                                          key="s1_next", use_container_width=True):
+                                st.session_state[page_key] += 1; st.rerun()
+
+                        # Add all not-yet-added
                         not_added = [f for f in tiffs if f['name'] not in existing]
                         if not_added:
-                            if st.button(f"➕ Add all {len(not_added)} TIFFs from this folder",
+                            if st.button(f"➕ Add all {len(not_added)} remaining TIFFs",
                                          type="primary", use_container_width=True,
                                          key="s1_add_all"):
                                 prog = st.progress(0, text="Downloading...")
@@ -500,27 +475,13 @@ if st.session_state.step == 0:
                         else:
                             st.success("✅ All files in this folder already added!")
 
-                    elif not folders:
+                    elif not folders and not search:
                         st.caption("No TIFF files or folders found here.")
+                    elif not folders and not tiffs:
+                        st.caption(f"No results for '{search}'")
 
                 except Exception as e:
                     st.error(f"Drive error: {e}")
-
-                st.markdown("---")
-                st.caption("💡 Or paste a ZIP file ID to download directly:")
-                gid = st.text_input("ZIP File ID (optional)",
-                                    placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs",
-                                    key="gid_step1")
-                if st.button("📥 Fetch ZIP", use_container_width=True, key="fetch_step1") and gid:
-                    with st.spinner("Downloading..."):
-                        try:
-                            import urllib.request
-                            url = f"https://drive.google.com/uc?export=download&id={gid}"
-                            with urllib.request.urlopen(url) as r:
-                                zf = io.BytesIO(r.read())
-                            st.success("✅ Downloaded!")
-                        except Exception as e:
-                            st.error(f"❌ {e}")
 
     with col_info:
         st.markdown("""
