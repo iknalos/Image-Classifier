@@ -195,20 +195,6 @@ def can_advance(to_step):
 #  SIDEBAR
 # ============================================================
 with st.sidebar:
-    # TEMPORARY DEBUG
-    try:
-        s = st.secrets["auth"]
-        st.write("client_id:", s.get("client_id", "MISSING"))
-        st.write("client_secret:", "EXISTS" if "client_secret" in s else "MISSING")
-        st.write("redirect_uri:", s.get("redirect_uri", "MISSING"))
-        required = ["client_id","client_secret","redirect_uri"]
-        check = all(k in s for k in required)
-        st.write("All required keys present:", check)
-    except Exception as e:
-        st.write("Exception:", str(e))
-    
-    st.markdown("## 🍷 Wine Classifier")
-    
     st.markdown("## 🍷 Wine Classifier")
     st.markdown("---")
 
