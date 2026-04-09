@@ -261,6 +261,34 @@ if st.session_state.step == 0:
         | PO    | `PO_100K_1.tiff`  |
         """)
 
+    with st.expander("ℹ️ What kind of images do I need?"):
+        st.markdown("""
+        **Camera & Format**
+        This app is designed for the **Basler daA2500** camera with a
+        **9×9 mosaic spectral filter** (81 bands). Images must be raw `.tiff` files
+        — do not convert to JPEG or PNG as this destroys the spectral data.
+
+        **How many images per wine?**
+        A minimum of **2 images per wine type** is required. 3 or more is recommended
+        for reliable accuracy. More images = better model.
+
+        **What does the app do with the raw TIFF?**
+        Each pixel in the raw TIFF contains light from one specific wavelength filter.
+        The app *demosaics* the image — separating the 9×9 tile pattern into
+        81 individual wavelength images — then extracts spectral features from your
+        chosen region.
+
+        **Important — consistent conditions:**
+        All images (training and prediction) should be captured under the
+        **same exposure, distance, and lighting**. Variations between sessions
+        can reduce prediction confidence.
+
+        **File naming:**
+        The wine label is detected automatically from the filename.
+        Just make sure the wine name appears somewhere in the filename
+        (e.g. `Dao_sample1.tiff`, `my_ODC_capture.tiff`).
+        """)
+
     if zf:
         with st.spinner("Reading ZIP..."):
             zdata = zf if isinstance(zf, io.BytesIO) else io.BytesIO(zf.read())
@@ -333,6 +361,29 @@ elif st.session_state.step == 1:
         <h2>🎯 Step 2 — Select ROI Regions</h2>
         <p>Position both boxes over the wine liquid. Avoid glass edges and the stem.</p>
     </div>""", unsafe_allow_html=True)
+
+    with st.expander("ℹ️ How does this step work?"):
+        st.markdown("""
+        **What is an ROI?**
+        ROI stands for *Region of Interest* — it's the area of the image the model will
+        actually analyse. We ignore everything else (glass edges, background, stem).
+
+        **Why two ROIs?**
+        Two separate regions on the wine liquid give the model more variety.
+        Think of it like tasting from two different parts of the glass — more data,
+        more reliable result.
+
+        **How much data does this generate?**
+        Each ROI is divided into a grid of small 30×30 pixel sub-patches.
+        A typical 150×120 ROI gives ~20 patches. Two ROIs = **~40 patches per image**.
+        Across 3 training images that's **~120 samples per wine type** — all from just 6 files.
+
+        **Tips for good ROI placement:**
+        - ✅ Place both boxes on the **liquid part** of the wine
+        - ✅ Keep them away from glass edges and reflections
+        - ✅ Spread them apart — left and right of the glass is ideal
+        - ❌ Avoid the stem, base, or background
+        """)
 
     if not st.session_state.tiff_files:
         st.warning("⚠️ Go back to Step 1 first."); st.stop()
@@ -422,6 +473,38 @@ elif st.session_state.step == 2:
         st.warning("⚠️ Complete Step 1 first."); st.stop()
     if st.session_state.rois is None:
         st.warning("⚠️ Complete Step 2 first."); st.stop()
+
+    with st.expander("ℹ️ How does training work?"):
+        st.markdown("""
+        **What happens when you click Train?**
+
+        1. **Demosaic** — each TIFF is split into 81 spectral band images
+           (the 9×9 mosaic filter is separated into individual wavelength channels)
+        2. **Patch extraction** — each ROI is divided into 30×30 px sub-patches.
+           Every patch becomes one training sample with **162 features**
+           (81 band mean intensities + 81 band standard deviations)
+        3. **Training** — the classifier learns what Dao looks like vs ODC
+           across all 81 spectral bands
+
+        **How much data does this generate?**
+        ```
+        1 image × 2 ROIs × ~20 patches = 40 samples per image
+        3 Dao images × 40 patches      = 120 Dao samples
+        3 ODC images × 40 patches      = 120 ODC samples
+        Total                          = ~240 training samples
+        ```
+        All from just 6 raw TIFF files.
+
+        **What is Leave-One-Image-Out validation?**
+        The model is tested 6 times — each time one full image is hidden,
+        the model trains on the other 5, then tries to predict the hidden one.
+        This gives an honest accuracy score with no "cheating" between train and test.
+
+        **What do the charts show?**
+        - 📈 **Spectral signatures** — how bright each wine is across all 81 bands
+        - 🔬 **PCA plot** — patches grouped into clusters; well-separated = easier to classify
+        - 📊 **Confusion matrix** — which wines were correctly or incorrectly predicted
+        """)
 
     if st.session_state.training_done:
         st.success("✅ Model already trained. Scroll down to see results, or retrain below.")
