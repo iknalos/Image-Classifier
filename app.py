@@ -13,6 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GroupKFold, cross_val_predict
 from sklearn.metrics import confusion_matrix
@@ -424,6 +425,49 @@ elif st.session_state.step == 2:
 
     if st.session_state.training_done:
         st.success("✅ Model already trained. Scroll down to see results, or retrain below.")
+
+    # ── Model selection ──
+    st.markdown("### 🧠 Classifier Selection")
+
+    col_table, col_pick = st.columns([3, 2])
+
+    with col_table:
+        st.markdown("**Research comparison — hyperspectral wine classification:**")
+        st.markdown("""
+| Model | Small data? | Wine HSI proven? | Speed | Recommended |
+|-------|-------------|-----------------|-------|-------------|
+| **Ensemble (SVM+RF+XGB)** | ✅ Best | ✅ Yes | ✅ Fast | ⭐ Default |
+| SVM RBF | ✅ Best | ✅ Yes | ✅ Fast | ✅ Good |
+| Random Forest | ✅ Good | ✅ Yes | ✅ Fast | ✅ Good |
+| XGBoost | ✅ Good | ✅ Yes | ✅ Fast | ✅ Good |
+| CNN / Deep Learning | ❌ Needs 1000s | ✅ Best accuracy | ❌ Slow | ⚠️ Not yet |
+        """)
+        st.caption("Sources: ScienceDirect 2024, PubMed, ACM Digital Library")
+
+    with col_pick:
+        st.markdown("**Select classifier:**")
+        model_choice = st.radio(
+            "classifier",
+            ["⭐ Ensemble (SVM + RF + XGB)  ← Recommended",
+             "SVM RBF",
+             "Random Forest",
+             "XGBoost"],
+            label_visibility='collapsed'
+        )
+        model_key = model_choice.split("(")[0].strip().replace("⭐ ","").strip()
+
+        descriptions = {
+            "Ensemble": "3 models vote together — most robust for small datasets. "
+                        "Proven best in peer-reviewed hyperspectral wine research (ScienceDirect 2024).",
+            "SVM RBF":  "Support Vector Machine with RBF kernel. Excellent for high-dimensional "
+                        "spectral data. F1 scores up to 0.99 in grapevine HSI studies (PubMed).",
+            "Random Forest": "Ensemble of decision trees. Handles non-linear band "
+                             "interactions well and is resistant to overfitting.",
+            "XGBoost":  "Gradient boosting — often outperforms RF on tabular/spectral data. "
+                        "Showed considerable prediction power in wine HSI research.",
+        }
+        key = "Ensemble" if "Ensemble" in model_key else model_key
+        st.info(descriptions.get(key, ""))
 
     if st.button("🚀 Start Training", type="primary", use_container_width=True):
         rois = st.session_state.rois
