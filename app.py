@@ -209,18 +209,12 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ── Slider snap helper ──
-# Ensures a value is always reachable given (min, max, step) — prevents
-# the "values property is in conflict with step/min/max" Streamlit crash.
-def snap(v, step, lo, hi):
-    """Round v to the nearest multiple of step, clamped to [lo, hi]."""
-    return int(max(lo, min(hi, round(v / step) * step)))
-
 # ── Google helpers ──
 def get_google_creds():
     if not GOOGLE_AVAILABLE:
         return None
     try:
+        # Support [google_oauth] (preferred) or legacy [auth] without cookie_secret
         if "google_oauth" in st.secrets:
             section = st.secrets.google_oauth
         elif "auth" in st.secrets:
@@ -500,6 +494,7 @@ if st.session_state.step == 0:
 
     col_up, col_info = st.columns([3,2])
 
+    # Track new files added this run (for ZIP and Drive)
     zf = None
 
     with col_up:
@@ -509,6 +504,7 @@ if st.session_state.step == 0:
         with tab_local:
             col_tiff, col_zip = st.columns(2)
 
+            # ── LEFT: Individual TIFFs ──
             with col_tiff:
                 st.markdown("""
                 <div style='background:#13131f;border:1px solid #2a2a40;border-radius:12px;
@@ -537,6 +533,7 @@ if st.session_state.step == 0:
                         st.success(f"✅ Added {len(added)} TIFF(s)")
                         st.rerun()
 
+            # ── RIGHT: ZIP ──
             with col_zip:
                 st.markdown("""
                 <div style='background:#13131f;border:1px solid #2a2a40;border-radius:12px;
@@ -819,7 +816,8 @@ elif st.session_state.step == 1:
     inv_x    = W_orig / canvas_w
     inv_y    = H_orig / canvas_h
 
-    # ── Apply dragged positions ──
+    # ── Apply dragged positions (always visible) ──
+    # Uses URL query params if replaceState worked; shows button regardless
     qp = st.query_params
     has_drag = 'drag_roi1' in qp and 'drag_roi2' in qp
 
@@ -840,16 +838,15 @@ elif st.session_state.step == 1:
         try:
             r1 = list(map(int, qp['drag_roi1'].split(',')))
             r2 = list(map(int, qp['drag_roi2'].split(',')))
-            def _cl(v, lo, hi): return max(lo, min(hi, v))
-            # ── FIX: snap all values to their slider step before storing ──
-            st.session_state.cx1 = snap(_cl((r1[0]+r1[2])//2, 0, W_orig), 5, 0, W_orig)
-            st.session_state.cy1 = snap(_cl((r1[1]+r1[3])//2, 0, H_orig), 5, 0, H_orig)
-            st.session_state.rw1 = snap(_cl(r1[2]-r1[0], 30, min(400,W_orig)), 10, 30, min(400,W_orig))
-            st.session_state.rh1 = snap(_cl(r1[3]-r1[1], 30, min(400,H_orig)), 10, 30, min(400,H_orig))
-            st.session_state.cx2 = snap(_cl((r2[0]+r2[2])//2, 0, W_orig), 5, 0, W_orig)
-            st.session_state.cy2 = snap(_cl((r2[1]+r2[3])//2, 0, H_orig), 5, 0, H_orig)
-            st.session_state.rw2 = snap(_cl(r2[2]-r2[0], 30, min(400,W_orig)), 10, 30, min(400,W_orig))
-            st.session_state.rh2 = snap(_cl(r2[3]-r2[1], 30, min(400,H_orig)), 10, 30, min(400,H_orig))
+            def _cl(v,lo,hi): return max(lo,min(hi,v))
+            st.session_state.cx1 = _cl((r1[0]+r1[2])//2, 0, W_orig)
+            st.session_state.cy1 = _cl((r1[1]+r1[3])//2, 0, H_orig)
+            st.session_state.rw1 = _cl(r1[2]-r1[0], 30, min(400,W_orig))
+            st.session_state.rh1 = _cl(r1[3]-r1[1], 30, min(400,H_orig))
+            st.session_state.cx2 = _cl((r2[0]+r2[2])//2, 0, W_orig)
+            st.session_state.cy2 = _cl((r2[1]+r2[3])//2, 0, H_orig)
+            st.session_state.rw2 = _cl(r2[2]-r2[0], 30, min(400,W_orig))
+            st.session_state.rh2 = _cl(r2[3]-r2[1], 30, min(400,H_orig))
             st.query_params.clear()
             st.rerun()
         except Exception as ex:
@@ -864,17 +861,16 @@ elif st.session_state.step == 1:
 
     with col_sl:
         st.markdown("##### 🔵 ROI 1")
-        # ── FIX: wrap every default value in snap() so it's always on-grid ──
-        cx1 = st.slider("Center X ",  0, W_orig, snap(st.session_state.get('cx1', W_orig//2-100), 5, 0, W_orig),  5, key='cx1')
-        cy1 = st.slider("Center Y ",  0, H_orig, snap(st.session_state.get('cy1', H_orig//2),     5, 0, H_orig),  5, key='cy1')
-        rw1 = st.slider("Width  ",   30, min(400,W_orig), snap(st.session_state.get('rw1', 150), 10, 30, min(400,W_orig)), 10, key='rw1')
-        rh1 = st.slider("Height  ",  30, min(400,H_orig), snap(st.session_state.get('rh1', 120), 10, 30, min(400,H_orig)), 10, key='rh1')
+        cx1 = st.slider("Center X ",  0, W_orig, st.session_state.get('cx1', W_orig//2-100), 5,  key='cx1')
+        cy1 = st.slider("Center Y ",  0, H_orig, st.session_state.get('cy1', H_orig//2),     5,  key='cy1')
+        rw1 = st.slider("Width  ",   30, min(400,W_orig), st.session_state.get('rw1', 150),  10, key='rw1')
+        rh1 = st.slider("Height  ",  30, min(400,H_orig), st.session_state.get('rh1', 120),  10, key='rh1')
         st.markdown("---")
         st.markdown("##### 🟠 ROI 2")
-        cx2 = st.slider("Center X  ", 0, W_orig, snap(st.session_state.get('cx2', W_orig//2+100), 5, 0, W_orig),  5, key='cx2')
-        cy2 = st.slider("Center Y  ", 0, H_orig, snap(st.session_state.get('cy2', H_orig//2),     5, 0, H_orig),  5, key='cy2')
-        rw2 = st.slider("Width   ",  30, min(400,W_orig), snap(st.session_state.get('rw2', 150), 10, 30, min(400,W_orig)), 10, key='rw2')
-        rh2 = st.slider("Height   ", 30, min(400,H_orig), snap(st.session_state.get('rh2', 120), 10, 30, min(400,H_orig)), 10, key='rh2')
+        cx2 = st.slider("Center X  ", 0, W_orig, st.session_state.get('cx2', W_orig//2+100), 5,  key='cx2')
+        cy2 = st.slider("Center Y  ", 0, H_orig, st.session_state.get('cy2', H_orig//2),     5,  key='cy2')
+        rw2 = st.slider("Width   ",  30, min(400,W_orig), st.session_state.get('rw2', 150),  10, key='rw2')
+        rh2 = st.slider("Height   ", 30, min(400,H_orig), st.session_state.get('rh2', 120),  10, key='rh2')
 
     roi1 = (max(0,cx1-rw1//2), max(0,cy1-rh1//2), min(W_orig,cx1+rw1//2), min(H_orig,cy1+rh1//2))
     roi2 = (max(0,cx2-rw2//2), max(0,cy2-rh2//2), min(W_orig,cx2+rw2//2), min(H_orig,cy2+rh2//2))
@@ -884,6 +880,8 @@ elif st.session_state.step == 1:
     sr2 = [_sc(roi2[0],c_scale), _sc(roi2[1],c_scale), _sc(roi2[2],c_scale), _sc(roi2[3],c_scale)]
 
     with col_cv:
+        # ── Canvas: ONLY immediate drawing ops (fillRect / strokeRect / fillText)
+        # ── ZERO path operations → zero accumulation bug
         canvas_html = f"""<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <style>
@@ -901,6 +899,7 @@ const INV_X={inv_x}, INV_Y={inv_y};
 const cv  = document.getElementById('c');
 const ctx = cv.getContext('2d');
 
+// Each ROI stores canvas-space coords
 let rois = [
   {{x0:{sr1[0]},y0:{sr1[1]},x1:{sr1[2]},y1:{sr1[3]},color:'#1E90FF',name:'ROI 1'}},
   {{x0:{sr2[0]},y0:{sr2[1]},x1:{sr2[2]},y1:{sr2[3]},color:'#FFA500',name:'ROI 2'}}
@@ -911,6 +910,7 @@ const img = new Image();
 img.onload = () => draw();
 img.src = 'data:image/jpeg;base64,{b64}';
 
+// ── Draw: ONLY fillRect / strokeRect / fillText — no path ops ──
 function draw() {{
   ctx.clearRect(0, 0, cv.width, cv.height);
   if (img.complete && img.naturalWidth)
@@ -919,24 +919,32 @@ function draw() {{
   rois.forEach(roi => {{
     const {{x0,y0,x1,y1,color,name}} = roi;
     const w = x1-x0, h = y1-y0;
+
+    // Dashed border — professional style (Spectronon uses marquee outline)
     ctx.save();
     ctx.strokeStyle = color;
     ctx.lineWidth   = 2;
     ctx.setLineDash([6, 3]);
-    ctx.strokeRect(x0, y0, w, h);
+    ctx.strokeRect(x0, y0, w, h);    // ← immediate, no path state
     ctx.restore();
+
+    // Label background — fillRect is immediate, no path involved
     ctx.font = 'bold 11px sans-serif';
     const tw = ctx.measureText(name).width + 10;
     const th = 16;
     const lx = x0;
+    // Place above the box; if box is near top, place just inside
     const ly = (y0 > th + 3) ? y0 - th - 2 : y0 + 2;
     ctx.fillStyle = color;
-    ctx.fillRect(lx, ly, tw, th);
+    ctx.fillRect(lx, ly, tw, th);    // ← immediate, no path state
+
+    // Label text
     ctx.fillStyle = '#fff';
-    ctx.fillText(name, lx + 5, ly + 12);
+    ctx.fillText(name, lx + 5, ly + 12);  // ← immediate
   }});
 }}
 
+// ── Input ───────────────────────────────────────────────────
 function getPos(e) {{
   const r  = cv.getBoundingClientRect();
   const sx = cv.width / r.width, sy = cv.height / r.height;
@@ -1014,7 +1022,7 @@ cv.addEventListener('touchend',   onUp);
 </script></body></html>"""
         st.components.v1.html(canvas_html, height=canvas_h + 26, scrolling=False)
 
-    # ── Full-resolution pixel inspection ──
+    # ── Full-resolution pixel inspection (on demand) ──
     st.markdown("#### 🔍 Full-resolution pixel zoom")
     st.caption("Crops from original TIFF resolution — NEAREST interpolation keeps pixels crisp.")
     z1, z2 = st.columns(2)
@@ -1060,7 +1068,6 @@ cv.addEventListener('touchend',   onUp);
         st.session_state.rois = [roi1, roi2]
         st.session_state.step = 2
         st.rerun()
-
 # ============================================================
 #  STEP 3 — Train
 # ============================================================
@@ -1178,6 +1185,8 @@ elif st.session_state.step == 2:
 
         model = Pipeline([('scaler',StandardScaler()),('clf',clf)])
 
+        # ── CV uses a fast SVM only (avoids 54 heavy fits for ensemble) ──
+        # Full ensemble is fitted on ALL data below for actual predictions.
         prog.progress((img_id+1)/(img_id+2), text=f"Cross-validation ({img_id}-fold, fast SVM)...")
         cv_obj     = GroupKFold(n_splits=img_id)
         fast_cv    = Pipeline([('scaler', StandardScaler()),
@@ -1188,6 +1197,7 @@ elif st.session_state.step == 2:
         prog.progress(1.0, text=f"Fitting final {clf_name} on all data...")
         model.fit(X, y)
 
+        # ── Store everything in session state so tabs render on rerun ──
         st.session_state.model         = model
         st.session_state.training_done = True
         st.session_state.train_results = {
@@ -1197,9 +1207,9 @@ elif st.session_state.step == 2:
             'img_id': img_id, 'clf_name': clf_name,
         }
         prog.empty()
-        st.rerun()
+        st.rerun()  # rerun so charts render outside the button block (no stuck tabs)
 
-    # ── Render results ──
+    # ── Render results (always, after training done) ──
     if st.session_state.training_done and 'train_results' in st.session_state:
         R = st.session_state.train_results
         X          = R['X'];          y           = R['y']
@@ -1210,6 +1220,7 @@ elif st.session_state.step == 2:
 
         st.success(f"✅ Training complete — **{clf_name}**")
 
+        # Shared plot style
         STYLE = {
             'axes.facecolor':  '#0d0d18',
             'figure.facecolor':'#0a0a0f',
@@ -1226,6 +1237,7 @@ elif st.session_state.step == 2:
 
         t1,t2,t3,t4 = st.tabs(["📈 Spectra","🔬 PCA","📊 Confusion","📋 Per-Image"])
 
+        # ── Tab 1: Spectral signatures ──
         with t1:
             with plt.rc_context(STYLE):
                 fig, axes = plt.subplots(2, 1, figsize=(13, 9))
@@ -1241,6 +1253,7 @@ elif st.session_state.step == 2:
                 axes[0].set_xlabel("Spectral Band Index  (0–80, 9×9 mosaic filter)", fontsize=10)
                 axes[0].set_ylabel("Raw Pixel Intensity (DN)", fontsize=10)
                 axes[0].set_xlim(0, N_BANDS-1)
+                # Mark 9-band tile boundaries
                 for b in range(0, N_BANDS, 9):
                     axes[0].axvline(b, color='#2a2a40', lw=0.8, ls='--', zorder=0)
                 axes[0].legend(fontsize=9, framealpha=0.3, loc='upper right')
@@ -1266,6 +1279,7 @@ elif st.session_state.step == 2:
                 plt.tight_layout(h_pad=2.5)
                 st.pyplot(fig, use_container_width=True); plt.close(fig)
 
+        # ── Tab 2: PCA ──
         with t2:
             with plt.rc_context(STYLE):
                 sc  = StandardScaler()
@@ -1291,6 +1305,7 @@ elif st.session_state.step == 2:
                 plt.tight_layout()
                 st.pyplot(fig2, use_container_width=True); plt.close(fig2)
 
+        # ── Tab 3: Confusion matrix ──
         with t3:
             cm = confusion_matrix(y, y_pred, labels=all_labels)
             with plt.rc_context(STYLE):
@@ -1309,6 +1324,7 @@ elif st.session_state.step == 2:
                         ax3.text(j, i, str(cm[i,j]), ha='center', va='center', fontsize=13,
                                  fontweight='bold',
                                  color='white' if cm[i,j] > cm.max()*0.5 else '#333')
+                # Accuracy on diagonal
                 diag_acc = cm.diagonal().sum() / cm.sum() * 100
                 ax3.set_title(
                     f"Confusion Matrix — Leave-One-Image-Out CV   (patch accuracy {diag_acc:.1f}%)",
@@ -1316,6 +1332,7 @@ elif st.session_state.step == 2:
                 plt.tight_layout()
                 st.pyplot(fig3, use_container_width=True); plt.close(fig3)
 
+        # ── Tab 4: Per-image results ──
         with t4:
             rows = []; correct = 0
             for gid in range(img_id):
@@ -1335,6 +1352,7 @@ elif st.session_state.step == 2:
             mc3.metric("Total Patches",          f"{len(X):,}")
             st.dataframe(rows, use_container_width=True)
 
+            # Bar chart of patch agreement per image
             with plt.rc_context(STYLE):
                 fig4, ax4 = plt.subplots(figsize=(max(8, img_id*0.9), 4))
                 for gi, row in enumerate(rows):
