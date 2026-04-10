@@ -497,22 +497,24 @@ if st.session_state.step == 0:
 
         # ── LOCAL UPLOAD TAB ──
         with tab_local:
-            upload_mode = st.radio(
-                "Upload format",
-                ["🖼️ Individual TIFFs", "📦 ZIP file"],
-                horizontal=True,
-                label_visibility="collapsed",
-            )
+            col_tiff, col_zip = st.columns(2)
 
-            if upload_mode == "🖼️ Individual TIFFs":
-                # ── INDIVIDUAL TIFF UPLOADER ──
+            # ── LEFT: Individual TIFFs ──
+            with col_tiff:
+                st.markdown("""
+                <div style='background:#13131f;border:1px solid #2a2a40;border-radius:12px;
+                     padding:14px 16px 8px;margin-bottom:4px'>
+                    <div style='font-size:13px;font-weight:600;color:#e94560;margin-bottom:10px'>
+                        🖼️ Individual TIFFs
+                    </div>
+                """, unsafe_allow_html=True)
                 uploaded_tiffs = st.file_uploader(
-                    "Upload one or more TIFF files",
+                    "Select .tiff files",
                     type=["tiff", "tif"],
                     accept_multiple_files=True,
-                    label_visibility="collapsed",
                     key="step1_tiff_uploader",
                 )
+                st.markdown("</div>", unsafe_allow_html=True)
                 if uploaded_tiffs:
                     existing_names = [n for n, _ in st.session_state.tiff_files]
                     added = []
@@ -523,35 +525,24 @@ if st.session_state.step == 0:
                             st.session_state.file_labels[f.name] = get_label(f.name)
                             added.append(f.name)
                     if added:
-                        st.success(f"✅ Added {len(added)} TIFF file(s)")
+                        st.success(f"✅ Added {len(added)} TIFF(s)")
                         st.rerun()
-                elif not st.session_state.tiff_files:
-                    st.markdown("""
-                    <div style='text-align:center;padding:28px 16px;margin-top:4px;
-                         background:rgba(255,255,255,0.01);
-                         border:1px dashed rgba(255,255,255,0.07);border-radius:12px'>
-                        <div style='font-size:32px;margin-bottom:8px'>🖼️</div>
-                        <div style='font-size:13px;font-weight:600;color:#aaa;margin-bottom:4px'>No files uploaded yet</div>
-                        <div style='font-size:11px;color:#3a3a5c'>Select one or more .tiff / .tif files above</div>
-                    </div>""", unsafe_allow_html=True)
 
-            else:
-                # ── ZIP UPLOADER ──
+            # ── RIGHT: ZIP ──
+            with col_zip:
+                st.markdown("""
+                <div style='background:#13131f;border:1px solid #2a2a40;border-radius:12px;
+                     padding:14px 16px 8px;margin-bottom:4px'>
+                    <div style='font-size:13px;font-weight:600;color:#e94560;margin-bottom:10px'>
+                        📦 ZIP File
+                    </div>
+                """, unsafe_allow_html=True)
                 zf = st.file_uploader(
-                    "Drop your training ZIP here",
+                    "Select a ZIP",
                     type=["zip"],
-                    label_visibility="collapsed",
                     key="step1_zip_uploader",
                 )
-                if not st.session_state.tiff_files and not zf:
-                    st.markdown("""
-                    <div style='text-align:center;padding:28px 16px;margin-top:4px;
-                         background:rgba(255,255,255,0.01);
-                         border:1px dashed rgba(255,255,255,0.07);border-radius:12px'>
-                        <div style='font-size:32px;margin-bottom:8px'>📂</div>
-                        <div style='font-size:13px;font-weight:600;color:#aaa;margin-bottom:4px'>No files uploaded yet</div>
-                        <div style='font-size:11px;color:#3a3a5c'>Drag & drop a ZIP or click Upload above</div>
-                    </div>""", unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
 
         # ── GOOGLE DRIVE TAB ──
         with tab_drive:
