@@ -214,12 +214,17 @@ def get_google_creds():
     if not GOOGLE_AVAILABLE:
         return None
     try:
-        if "auth" not in st.secrets:
+        # Support [google_oauth] (preferred) or legacy [auth] without cookie_secret
+        if "google_oauth" in st.secrets:
+            section = st.secrets.google_oauth
+        elif "auth" in st.secrets:
+            section = st.secrets.auth
+        else:
             return None
         return {
-            "client_id":     st.secrets.auth.client_id,
-            "client_secret": st.secrets.auth.client_secret,
-            "redirect_uri":  st.secrets.auth.redirect_uri,
+            "client_id":     section.client_id,
+            "client_secret": section.client_secret,
+            "redirect_uri":  section.redirect_uri,
         }
     except Exception:
         return None
@@ -759,9 +764,12 @@ if st.session_state.step == 0:
             st.rerun()
 
 # ============================================================
-#  STEP 2 — ROI Selector
+#  STEP 2 — ROI Selector  (PIL-based, no matplotlib = fast)
 # ============================================================
 elif st.session_state.step == 1:
+    from PIL import Image as PILImage, ImageDraw as PILDraw, ImageFilter
+    import base64
+
     st.markdown("""<div class='step-header'>
         <h2>🎯 Step 2 — Select ROI Regions</h2>
         <p>Position both boxes over the sample area. Avoid edges and background.</p>
@@ -792,6 +800,39 @@ elif st.session_state.step == 1:
         st.session_state.ref_raw = raw
     H, W = raw.shape
 
+    # ── Cache the base display image as uint8 RGB PIL once ──
+    # Only recomputed when the reference image changes (not on every slider move)
+    if 'roi_base_img' not in st.session_state or st.session_state.get('roi_base_src') != st.session_state.tiff_files[0][0]:
+        disp = (disp_img(raw) * 255).astype(np.uint8)
+        # Convert grayscale to RGB for PIL colour drawing
+        disp_rgb = np.stack([disp, disp, disp], axis=2)
+        st.session_state.roi_base_img = disp_rgb          # H×W×3 uint8 numpy array
+        st.session_state.roi_base_src = st.session_state.tiff_files[0][0]
+
+    base_rgb = st.session_state.roi_base_img  # fast reference — no copy yet
+
+    def draw_roi_pil(base_arr, rois_spec, target_w=900):
+        """Draw ROI boxes on a cached uint8 RGB array using PIL. ~2ms."""
+        H_b, W_b = base_arr.shape[:2]
+        scale = target_w / W_b
+        new_w, new_h = target_w, int(H_b * scale)
+        img = PILImage.fromarray(base_arr).resize((new_w, new_h), PILImage.NEAREST)
+        draw = PILDraw.Draw(img, "RGBA")
+        colors = [(30,144,255), (255,165,0)]   # dodgerblue, orange
+        for (x0,y0,x1,y1), (r,g,b) in zip(rois_spec, colors):
+            sx0,sy0 = int(x0*scale), int(y0*scale)
+            sx1,sy1 = int(x1*scale), int(y1*scale)
+            draw.rectangle([sx0,sy0,sx1,sy1], fill=(r,g,b,50), outline=(r,g,b,255), width=3)
+        return img
+
+    def crop_roi_pil(base_arr, roi):
+        """Crop ROI from cached array. ~0.1ms."""
+        x0,y0,x1,y1 = roi
+        crop = base_arr[y0:y1, x0:x1]
+        if crop.size == 0:
+            return PILImage.fromarray(np.zeros((10,10,3), dtype=np.uint8))
+        return PILImage.fromarray(crop)
+
     st.caption(f"Reference: `{st.session_state.tiff_files[0][0]}`  |  {W}×{H} px")
     col_sliders, col_preview = st.columns([2,3])
 
@@ -816,29 +857,17 @@ elif st.session_state.step == 1:
     with col_preview:
         tab_full, tab_r1, tab_r2 = st.tabs(["🖼️ Full Image","🔵 ROI 1","🟠 ROI 2"])
         with tab_full:
-            fig, ax = plt.subplots(figsize=(7,5))
-            ax.imshow(disp_img(raw), cmap='gray', aspect='auto')
-            for (x0,y0,x1_,y1_),c in [(roi1,'dodgerblue'),(roi2,'orange')]:
-                ax.add_patch(patches.Rectangle((x0,y0),x1_-x0,y1_-y0,
-                    lw=2,edgecolor=c,facecolor=c,alpha=0.2))
-                ax.add_patch(patches.Rectangle((x0,y0),x1_-x0,y1_-y0,
-                    lw=2,edgecolor=c,facecolor='none'))
-            ax.axis('off'); plt.tight_layout()
-            st.pyplot(fig,use_container_width=True); plt.close(fig)
+            # PIL draw: ~2ms vs matplotlib ~300ms
+            preview_img = draw_roi_pil(base_rgb, [roi1, roi2])
+            st.image(preview_img, use_container_width=True)
         with tab_r1:
-            fig,ax = plt.subplots(figsize=(5,4))
-            ax.imshow(disp_img(raw)[roi1[1]:roi1[3],roi1[0]:roi1[2]],
-                      cmap='gray',interpolation='nearest')
-            ax.set_title(f"{roi1[2]-roi1[0]}×{roi1[3]-roi1[1]} px")
-            ax.axis('off'); plt.tight_layout()
-            st.pyplot(fig,use_container_width=True); plt.close(fig)
+            crop1 = crop_roi_pil(base_rgb, roi1)
+            st.image(crop1, use_container_width=True)
+            st.caption(f"{roi1[2]-roi1[0]}×{roi1[3]-roi1[1]} px")
         with tab_r2:
-            fig,ax = plt.subplots(figsize=(5,4))
-            ax.imshow(disp_img(raw)[roi2[1]:roi2[3],roi2[0]:roi2[2]],
-                      cmap='gray',interpolation='nearest')
-            ax.set_title(f"{roi2[2]-roi2[0]}×{roi2[3]-roi2[1]} px")
-            ax.axis('off'); plt.tight_layout()
-            st.pyplot(fig,use_container_width=True); plt.close(fig)
+            crop2 = crop_roi_pil(base_rgb, roi2)
+            st.image(crop2, use_container_width=True)
+            st.caption(f"{roi2[2]-roi2[0]}×{roi2[3]-roi2[1]} px")
 
     st.markdown(
         f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:8px;"
