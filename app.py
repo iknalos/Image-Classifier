@@ -764,30 +764,27 @@ if st.session_state.step == 0:
             st.rerun()
 
 # ============================================================
-#  STEP 2 — ROI Selector  (PIL-based, no matplotlib = fast)
+#  STEP 2 — ROI Selector  (canvas drag + slider fine-tune)
 # ============================================================
 elif st.session_state.step == 1:
-    from PIL import Image as PILImage, ImageDraw as PILDraw, ImageFilter
+    from PIL import Image as PILImage, ImageDraw as PILDraw
     import base64
 
     st.markdown("""<div class='step-header'>
         <h2>🎯 Step 2 — Select ROI Regions</h2>
-        <p>Position both boxes over the sample area. Avoid edges and background.</p>
+        <p>Drag the boxes directly on the image, or fine-tune with sliders below.</p>
     </div>""", unsafe_allow_html=True)
 
     with st.expander("ℹ️ How does this step work?"):
         st.markdown("""
         **What is an ROI?**
-        ROI = Region of Interest. It's the area the model analyses — everything
-        else is ignored.
+        ROI = Region of Interest. It's the area the model analyses — everything else is ignored.
+
+        **Dragging:** grab the box interior to move, grab a corner handle to resize.
+        After dragging, click **Apply dragged positions** to sync the boxes to Streamlit.
 
         **Why two ROIs?**
-        Two separate regions give the model more variety.
-        More spatial diversity = more robust model.
-
-        **How much data does this generate?**
-        Each ROI is split into ~20 small patches. Two ROIs = **~40 patches per image**.
-        Across 3 training images that's **~120 samples per class** from just 6 files.
+        More spatial diversity = more robust model. Spread them across the sample.
         """)
 
     if not st.session_state.tiff_files:
@@ -795,88 +792,266 @@ elif st.session_state.step == 1:
 
     raw = st.session_state.ref_raw
     if raw is None:
-        _,data = st.session_state.tiff_files[0]
-        raw,_  = load_and_demosaic(data)
+        _, data = st.session_state.tiff_files[0]
+        raw, _ = load_and_demosaic(data)
         st.session_state.ref_raw = raw
-    H, W = raw.shape
+    H_orig, W_orig = raw.shape
 
-    # ── Cache the base display image as uint8 RGB PIL once ──
-    # Only recomputed when the reference image changes (not on every slider move)
-    if 'roi_base_img' not in st.session_state or st.session_state.get('roi_base_src') != st.session_state.tiff_files[0][0]:
+    # ── Cache base uint8 RGB array (computed once) ──
+    ref_name = st.session_state.tiff_files[0][0]
+    if ('roi_base_img' not in st.session_state
+            or st.session_state.get('roi_base_src') != ref_name):
         disp = (disp_img(raw) * 255).astype(np.uint8)
-        # Convert grayscale to RGB for PIL colour drawing
-        disp_rgb = np.stack([disp, disp, disp], axis=2)
-        st.session_state.roi_base_img = disp_rgb          # H×W×3 uint8 numpy array
-        st.session_state.roi_base_src = st.session_state.tiff_files[0][0]
+        st.session_state.roi_base_img = np.stack([disp, disp, disp], axis=2)
+        st.session_state.roi_base_src = ref_name
 
-    base_rgb = st.session_state.roi_base_img  # fast reference — no copy yet
+    base_rgb = st.session_state.roi_base_img
 
-    def draw_roi_pil(base_arr, rois_spec, target_w=900):
-        """Draw ROI boxes on a cached uint8 RGB array using PIL. ~2ms."""
-        H_b, W_b = base_arr.shape[:2]
-        scale = target_w / W_b
-        new_w, new_h = target_w, int(H_b * scale)
-        img = PILImage.fromarray(base_arr).resize((new_w, new_h), PILImage.NEAREST)
-        draw = PILDraw.Draw(img, "RGBA")
-        colors = [(30,144,255), (255,165,0)]   # dodgerblue, orange
-        for (x0,y0,x1,y1), (r,g,b) in zip(rois_spec, colors):
-            sx0,sy0 = int(x0*scale), int(y0*scale)
-            sx1,sy1 = int(x1*scale), int(y1*scale)
-            draw.rectangle([sx0,sy0,sx1,sy1], fill=(r,g,b,50), outline=(r,g,b,255), width=3)
-        return img
+    # ── Cache base64 canvas image (computed once, JPEG ~300KB) ──
+    CANVAS_MAX_W = 820
+    if ('roi_canvas_b64' not in st.session_state
+            or st.session_state.get('roi_canvas_src') != ref_name):
+        _scale  = min(1.0, CANVAS_MAX_W / W_orig)
+        _cw, _ch = int(W_orig * _scale), int(H_orig * _scale)
+        _cimg = PILImage.fromarray(base_rgb).resize((_cw, _ch), PILImage.LANCZOS)
+        _buf  = io.BytesIO()
+        _cimg.save(_buf, format='JPEG', quality=82)
+        st.session_state.roi_canvas_b64  = base64.b64encode(_buf.getvalue()).decode()
+        st.session_state.roi_canvas_src  = ref_name
+        st.session_state.roi_canvas_w    = _cw
+        st.session_state.roi_canvas_h    = _ch
+        st.session_state.roi_canvas_scale = _scale
 
-    def crop_roi_pil(base_arr, roi):
-        """Crop ROI from cached array. ~0.1ms."""
-        x0,y0,x1,y1 = roi
-        crop = base_arr[y0:y1, x0:x1]
-        if crop.size == 0:
-            return PILImage.fromarray(np.zeros((10,10,3), dtype=np.uint8))
-        return PILImage.fromarray(crop)
+    b64      = st.session_state.roi_canvas_b64
+    canvas_w = st.session_state.roi_canvas_w
+    canvas_h = st.session_state.roi_canvas_h
+    c_scale  = st.session_state.roi_canvas_scale   # canvas / original
 
-    st.caption(f"Reference: `{st.session_state.tiff_files[0][0]}`  |  {W}×{H} px")
-    col_sliders, col_preview = st.columns([2,3])
+    # ── Read dragged positions from URL query params ──
+    qp = st.query_params
+    has_drag = 'drag_roi1' in qp and 'drag_roi2' in qp
 
-    with col_sliders:
-        st.markdown("#### 🔵 ROI 1")
-        cx1 = st.slider("Center X", 0, W, W//2-100, 5, key='cx1')
-        cy1 = st.slider("Center Y", 0, H, H//2,      5, key='cy1')
-        rw1 = st.slider("Width",   30, 400, 150,     10, key='rw1')
-        rh1 = st.slider("Height",  30, 400, 120,     10, key='rh1')
-        st.markdown("---")
-        st.markdown("#### 🟠 ROI 2")
-        cx2 = st.slider("Center X", 0, W, W//2+100, 5, key='cx2')
-        cy2 = st.slider("Center Y", 0, H, H//2,      5, key='cy2')
-        rw2 = st.slider("Width",   30, 400, 150,     10, key='rw2')
-        rh2 = st.slider("Height",  30, 400, 120,     10, key='rh2')
+    if has_drag:
+        st.info("📍 Boxes moved — click **Apply** to sync positions, or keep dragging.")
+        if st.button("📍 Apply dragged positions", type="primary", use_container_width=True):
+            try:
+                r1 = list(map(int, qp['drag_roi1'].split(',')))
+                r2 = list(map(int, qp['drag_roi2'].split(',')))
+                def _clamp(v, lo, hi): return max(lo, min(hi, v))
+                # Update slider session-state keys so sliders reflect new position
+                st.session_state.cx1 = _clamp((r1[0]+r1[2])//2, 0, W_orig)
+                st.session_state.cy1 = _clamp((r1[1]+r1[3])//2, 0, H_orig)
+                st.session_state.rw1 = _clamp(r1[2]-r1[0], 30, 400)
+                st.session_state.rh1 = _clamp(r1[3]-r1[1], 30, 400)
+                st.session_state.cx2 = _clamp((r2[0]+r2[2])//2, 0, W_orig)
+                st.session_state.cy2 = _clamp((r2[1]+r2[3])//2, 0, H_orig)
+                st.session_state.rw2 = _clamp(r2[2]-r2[0], 30, 400)
+                st.session_state.rh2 = _clamp(r2[3]-r2[1], 30, 400)
+                st.query_params.clear()
+            except Exception as ex:
+                st.error(f"Could not apply dragged positions: {ex}")
+            st.rerun()
 
-    roi1 = (max(0,cx1-rw1//2), max(0,cy1-rh1//2),
-            min(W,cx1+rw1//2), min(H,cy1+rh1//2))
-    roi2 = (max(0,cx2-rw2//2), max(0,cy2-rh2//2),
-            min(W,cx2+rw2//2), min(H,cy2+rh2//2))
+    st.caption(f"Reference: `{ref_name}`  |  {W_orig}×{H_orig} px")
 
-    with col_preview:
-        tab_full, tab_r1, tab_r2 = st.tabs(["🖼️ Full Image","🔵 ROI 1","🟠 ROI 2"])
-        with tab_full:
-            # PIL draw: ~2ms vs matplotlib ~300ms
-            preview_img = draw_roi_pil(base_rgb, [roi1, roi2])
-            st.image(preview_img, use_container_width=True)
-        with tab_r1:
-            crop1 = crop_roi_pil(base_rgb, roi1)
-            st.image(crop1, use_container_width=True)
-            st.caption(f"{roi1[2]-roi1[0]}×{roi1[3]-roi1[1]} px")
-        with tab_r2:
-            crop2 = crop_roi_pil(base_rgb, roi2)
-            st.image(crop2, use_container_width=True)
-            st.caption(f"{roi2[2]-roi2[0]}×{roi2[3]-roi2[1]} px")
+    # ── Sliders (fine-tune) ──
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        st.markdown("##### 🔵 ROI 1")
+        cx1 = st.slider("Center X ", 0, W_orig, st.session_state.get('cx1', W_orig//2-100), 5, key='cx1')
+        cy1 = st.slider("Center Y ", 0, H_orig, st.session_state.get('cy1', H_orig//2),     5, key='cy1')
+        rw1 = st.slider("Width  ",   30, min(400, W_orig), st.session_state.get('rw1', 150), 10, key='rw1')
+        rh1 = st.slider("Height  ",  30, min(400, H_orig), st.session_state.get('rh1', 120), 10, key='rh1')
+    with col_s2:
+        st.markdown("##### 🟠 ROI 2")
+        cx2 = st.slider("Center X  ", 0, W_orig, st.session_state.get('cx2', W_orig//2+100), 5, key='cx2')
+        cy2 = st.slider("Center Y  ", 0, H_orig, st.session_state.get('cy2', H_orig//2),     5, key='cy2')
+        rw2 = st.slider("Width   ",   30, min(400, W_orig), st.session_state.get('rw2', 150), 10, key='rw2')
+        rh2 = st.slider("Height   ",  30, min(400, H_orig), st.session_state.get('rh2', 120), 10, key='rh2')
 
+    roi1 = (max(0,cx1-rw1//2), max(0,cy1-rh1//2), min(W_orig,cx1+rw1//2), min(H_orig,cy1+rh1//2))
+    roi2 = (max(0,cx2-rw2//2), max(0,cy2-rh2//2), min(W_orig,cx2+rw2//2), min(H_orig,cy2+rh2//2))
+
+    # Scale ROI coords to canvas space for the JS canvas
+    def _sc(v, s): return int(round(v * s))
+    sr1 = [_sc(roi1[0],c_scale), _sc(roi1[1],c_scale), _sc(roi1[2],c_scale), _sc(roi1[3],c_scale)]
+    sr2 = [_sc(roi2[0],c_scale), _sc(roi2[1],c_scale), _sc(roi2[2],c_scale), _sc(roi2[3],c_scale)]
+
+    inv_x = W_orig / canvas_w
+    inv_y = H_orig / canvas_h
+
+    # ── Interactive canvas ──
+    canvas_html = f"""<!DOCTYPE html><html><head>
+<style>
+  body{{margin:0;padding:0;background:#0a0a0f;overflow:hidden;}}
+  #wrap{{position:relative;display:inline-block;width:100%;}}
+  #c{{display:block;width:100%;cursor:default;}}
+  #tip{{font-family:monospace;font-size:11px;color:#777;padding:4px 6px;
+        background:#111;border-top:1px solid #222;white-space:nowrap;overflow:hidden;}}
+</style></head><body>
+<div id="wrap"><canvas id="c" width="{canvas_w}" height="{canvas_h}"></canvas></div>
+<div id="tip">Drag a box to move it • grab corner handles to resize • then click Apply above</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const INV_X  = {inv_x};
+const INV_Y  = {inv_y};
+const ORIG_W = {W_orig};
+const ORIG_H = {H_orig};
+const H_SZ   = 10;   // handle half-size px
+
+let rois = [
+  {{x0:{sr1[0]},y0:{sr1[1]},x1:{sr1[2]},y1:{sr1[3]},color:'#1E90FF',fill:'rgba(30,144,255,0.18)',name:'ROI 1'}},
+  {{x0:{sr2[0]},y0:{sr2[1]},x1:{sr2[2]},y1:{sr2[3]},color:'#FFA500',fill:'rgba(255,165,0,0.18)',name:'ROI 2'}}
+];
+
+const img = new Image();
+img.onload = () => draw();
+img.src = 'data:image/jpeg;base64,{b64}';
+
+function draw() {{
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (img.complete && img.naturalWidth) ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  rois.forEach(roi => {{
+    const {{x0,y0,x1,y1,color,fill,name}} = roi;
+    // Fill
+    ctx.fillStyle = fill;
+    ctx.fillRect(x0,y0,x1-x0,y1-y0);
+    // Border (dashed for style)
+    ctx.save();
+    ctx.setLineDash([6,3]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x0,y0,x1-x0,y1-y0);
+    ctx.restore();
+    // Corner handles
+    [[x0,y0],[x1,y0],[x0,y1],[x1,y1]].forEach(([hx,hy]) => {{
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.rect(hx-H_SZ,hy-H_SZ,H_SZ*2,H_SZ*2);
+      ctx.fill(); ctx.stroke();
+    }});
+    // Label pill
+    const lw = ctx.measureText(name).width + 16;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(x0+4,y0+4,lw,22,6)
+                  : ctx.rect(x0+4,y0+4,lw,22);
+    ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.font='bold 12px sans-serif';
+    ctx.fillText(name, x0+12, y0+19);
+  }});
+}}
+
+function getPos(e) {{
+  const r = canvas.getBoundingClientRect();
+  const sx = canvas.width/r.width, sy = canvas.height/r.height;
+  const src = e.touches ? e.touches[0] : e;
+  return {{x:(src.clientX-r.left)*sx, y:(src.clientY-r.top)*sy}};
+}}
+
+let drag = null;
+
+function hitTest(x,y) {{
+  for (let i=rois.length-1;i>=0;i--) {{
+    const {{x0,y0,x1,y1}} = rois[i];
+    const corners = [[x0,y0,'nw'],[x1,y0,'ne'],[x0,y1,'sw'],[x1,y1,'se']];
+    for (const [hx,hy,dir] of corners)
+      if (Math.abs(x-hx)<H_SZ+4 && Math.abs(y-hy)<H_SZ+4) return {{i,mode:dir}};
+    if (x>x0&&x<x1&&y>y0&&y<y1) return {{i,mode:'move'}};
+  }}
+  return null;
+}}
+
+function onDown(e) {{
+  const p=getPos(e), hit=hitTest(p.x,p.y);
+  if (!hit) return;
+  const roi=rois[hit.i];
+  drag={{...hit, sx:p.x, sy:p.y, orig:{{x0:roi.x0,y0:roi.y0,x1:roi.x1,y1:roi.y1}}}};
+  e.preventDefault();
+}}
+
+function onMove(e) {{
+  if (e.buttons===0 && !e.touches) {{ drag=null; }}
+  const p=getPos(e);
+  if (!drag) {{
+    const hit=hitTest(p.x,p.y);
+    const cm={{nw:'nw-resize',ne:'ne-resize',sw:'sw-resize',se:'se-resize',move:'grab'}};
+    canvas.style.cursor = hit ? (cm[hit.mode]||'grab') : 'default';
+    return;
+  }}
+  const dx=p.x-drag.sx, dy=p.y-drag.sy;
+  const o=drag.orig, roi=rois[drag.i];
+  const W=canvas.width, H=canvas.height, MIN=20;
+  if (drag.mode==='move') {{
+    const w=o.x1-o.x0, h=o.y1-o.y0;
+    roi.x0=Math.max(0,Math.min(W-w,o.x0+dx));
+    roi.y0=Math.max(0,Math.min(H-h,o.y0+dy));
+    roi.x1=roi.x0+w; roi.y1=roi.y0+h;
+  }} else {{
+    if (drag.mode[0]==='n') roi.y0=Math.max(0,     Math.min(o.y1-MIN, o.y0+dy));
+    if (drag.mode[0]==='s') roi.y1=Math.min(H,     Math.max(o.y0+MIN, o.y1+dy));
+    if (drag.mode[1]==='w') roi.x0=Math.max(0,     Math.min(o.x1-MIN, o.x0+dx));
+    if (drag.mode[1]==='e') roi.x1=Math.min(W,     Math.max(o.x0+MIN, o.x1+dx));
+  }}
+  roi.x0=Math.round(roi.x0); roi.y0=Math.round(roi.y0);
+  roi.x1=Math.round(roi.x1); roi.y1=Math.round(roi.y1);
+  draw();
+  updateTip();
+  e.preventDefault();
+}}
+
+function onUp() {{
+  if (!drag) return;
+  drag=null;
+  pushToParent();
+}}
+
+function toOrig(v,inv) {{ return Math.round(v*inv); }}
+
+function updateTip() {{
+  const r1=rois[0],r2=rois[1];
+  document.getElementById('tip').innerText =
+    `🔵 ROI 1: (${{toOrig(r1.x0,INV_X)}},${{toOrig(r1.y0,INV_Y)}})→(${{toOrig(r1.x1,INV_X)}},${{toOrig(r1.y1,INV_Y)}})  ` +
+    `🟠 ROI 2: (${{toOrig(r2.x0,INV_X)}},${{toOrig(r2.y0,INV_Y)}})→(${{toOrig(r2.x1,INV_X)}},${{toOrig(r2.y1,INV_Y)}})  — click Apply ↑`;
+}}
+
+function pushToParent() {{
+  try {{
+    const url=new URL(window.parent.location.href);
+    const r1=rois[0],r2=rois[1];
+    url.searchParams.set('drag_roi1',
+      [toOrig(r1.x0,INV_X),toOrig(r1.y0,INV_Y),toOrig(r1.x1,INV_X),toOrig(r1.y1,INV_Y)].join(','));
+    url.searchParams.set('drag_roi2',
+      [toOrig(r2.x0,INV_X),toOrig(r2.y0,INV_Y),toOrig(r2.x1,INV_X),toOrig(r2.y1,INV_Y)].join(','));
+    window.parent.history.replaceState({{}},'',url.toString());
+  }} catch(err) {{ console.warn('pushToParent',err); }}
+}}
+
+canvas.addEventListener('mousedown',  onDown);
+canvas.addEventListener('mousemove',  onMove);
+canvas.addEventListener('mouseup',    onUp);
+canvas.addEventListener('mouseleave', onUp);
+canvas.addEventListener('touchstart', onDown, {{passive:false}});
+canvas.addEventListener('touchmove',  onMove, {{passive:false}});
+canvas.addEventListener('touchend',   onUp);
+</script></body></html>"""
+
+    st.components.v1.html(canvas_html, height=canvas_h + 36, scrolling=False)
+
+    # ── Coordinate readout ──
     st.markdown(
         f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:8px;"
-        f"padding:12px 16px;margin:8px 0'>"
-        f"<b style='color:dodgerblue'>ROI 1:</b> "
-        f"X0={roi1[0]} Y0={roi1[1]} X1={roi1[2]} Y1={roi1[3]}"
-        f"&nbsp;&nbsp;&nbsp;"
-        f"<b style='color:orange'>ROI 2:</b> "
-        f"X0={roi2[0]} Y0={roi2[1]} X1={roi2[2]} Y1={roi2[3]}"
+        f"padding:10px 16px;margin:8px 0;font-size:13px'>"
+        f"<b style='color:#1E90FF'>ROI 1:</b> "
+        f"({roi1[0]}, {roi1[1]}) → ({roi1[2]}, {roi1[3]}) &nbsp;|&nbsp; "
+        f"{roi1[2]-roi1[0]}×{roi1[3]-roi1[1]} px"
+        f"&emsp;<b style='color:#FFA500'>ROI 2:</b> "
+        f"({roi2[0]}, {roi2[1]}) → ({roi2[2]}, {roi2[3]}) &nbsp;|&nbsp; "
+        f"{roi2[2]-roi2[0]}×{roi2[3]-roi2[1]} px"
         f"</div>", unsafe_allow_html=True)
 
     if st.button("✅ Confirm ROIs & Go to Training →",
@@ -884,7 +1059,6 @@ elif st.session_state.step == 1:
         st.session_state.rois = [roi1, roi2]
         st.session_state.step = 2
         st.rerun()
-
 # ============================================================
 #  STEP 3 — Train
 # ============================================================
