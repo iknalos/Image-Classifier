@@ -772,7 +772,7 @@ elif st.session_state.step == 1:
 
     st.markdown("""<div class='step-header'>
         <h2>🎯 Step 2 — Select ROI Regions</h2>
-        <p>Drag boxes on the image. Hover over a box to see its pixels zoomed in.</p>
+        <p>Drag boxes on the image to position them. Use sliders for fine-tuning.</p>
     </div>""", unsafe_allow_html=True)
 
     if not st.session_state.tiff_files:
@@ -792,10 +792,9 @@ elif st.session_state.step == 1:
         disp = (disp_img(raw) * 255).astype(np.uint8)
         st.session_state.roi_base_img = np.stack([disp, disp, disp], axis=2)
         st.session_state.roi_base_src = ref_name
-
     base_rgb = st.session_state.roi_base_img
 
-    # ── Cache downscaled JPEG base64 for canvas (once) ──
+    # ── Cache downscaled JPEG for canvas (once) ──
     CANVAS_MAX_W = 680
     if ('roi_canvas_b64' not in st.session_state
             or st.session_state.get('roi_canvas_src') != ref_name):
@@ -817,7 +816,7 @@ elif st.session_state.step == 1:
     inv_x    = W_orig / canvas_w
     inv_y    = H_orig / canvas_h
 
-    # ── Read back dragged positions from URL ──
+    # ── Read dragged positions from URL ──
     qp = st.query_params
     has_drag = 'drag_roi1' in qp and 'drag_roi2' in qp
     if has_drag:
@@ -865,167 +864,82 @@ elif st.session_state.step == 1:
     sr1 = [_sc(roi1[0],c_scale), _sc(roi1[1],c_scale), _sc(roi1[2],c_scale), _sc(roi1[3],c_scale)]
     sr2 = [_sc(roi2[0],c_scale), _sc(roi2[1],c_scale), _sc(roi2[2],c_scale), _sc(roi2[3],c_scale)]
 
+    # ── Canvas — drag only, label above box, no hover zoom ──
     with col_cv:
         canvas_html = f"""<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <style>
   *{{margin:0;padding:0;box-sizing:border-box;}}
   body{{background:#0a0a0f;overflow:hidden;}}
-  #wrap{{position:relative;display:inline-block;width:100%;}}
   #main{{display:block;width:100%;cursor:default;}}
-  /* Hover zoom popup */
-  #zpop{{
-    position:absolute;
-    display:none;
-    background:#111;
-    border:1px solid #333;
-    border-radius:6px;
-    overflow:hidden;
-    pointer-events:none;
-    z-index:10;
-    box-shadow:0 4px 20px rgba(0,0,0,0.7);
-  }}
-  #zpop canvas{{
-    display:block;
-    image-rendering:pixelated;
-    image-rendering:crisp-edges;
-  }}
-  #zpop .zlabel{{
-    font-family:monospace;font-size:10px;color:#888;
-    padding:3px 6px;background:#0d0d14;
-    border-top:1px solid #222;
-  }}
-  /* Status */
   #status{{
     font-family:monospace;font-size:11px;color:#555;
     padding:3px 6px;background:#0d0d14;
-    border-top:1px solid #1a1a28;
-    white-space:nowrap;overflow:hidden;
+    border-top:1px solid #1a1a28;white-space:nowrap;overflow:hidden;
   }}
 </style></head><body>
-<div id="wrap">
-  <canvas id="main" width="{canvas_w}" height="{canvas_h}"></canvas>
-  <div id="zpop">
-    <canvas id="zc" width="200" height="200"></canvas>
-    <div class="zlabel" id="zlbl">–</div>
-  </div>
-</div>
-<div id="status">Drag a box to move it • hover to inspect pixels</div>
-
+<canvas id="main" width="{canvas_w}" height="{canvas_h}"></canvas>
+<div id="status">Drag a box to reposition it • then click Apply above</div>
 <script>
 const INV_X={inv_x}, INV_Y={inv_y};
-const ORIG_W={W_orig}, ORIG_H={H_orig};
-const ZOOM_SIZE = 200;   // px of the zoom popup canvas
-
 const main  = document.getElementById('main');
 const mCtx  = main.getContext('2d');
-const zpop  = document.getElementById('zpop');
-const zc    = document.getElementById('zc');
-const zCtx  = zc.getContext('2d');
-const zlbl  = document.getElementById('zlbl');
-zCtx.imageSmoothingEnabled = false;
 
 let rois = [
   {{x0:{sr1[0]},y0:{sr1[1]},x1:{sr1[2]},y1:{sr1[3]},
-    color:'#1E90FF', fill:'rgba(30,144,255,0.15)', name:'ROI 1'}},
+    color:'#1E90FF', fill:'rgba(30,144,255,0.12)', name:'ROI 1'}},
   {{x0:{sr2[0]},y0:{sr2[1]},x1:{sr2[2]},y1:{sr2[3]},
-    color:'#FFA500', fill:'rgba(255,165,0,0.15)',   name:'ROI 2'}}
+    color:'#FFA500', fill:'rgba(255,165,0,0.12)',   name:'ROI 2'}}
 ];
 
 let drag = null;
-let hovered = -1;
 
-// ── Load background image ────────────────────────────────────
 const img = new Image();
 img.onload = () => drawMain();
 img.src = 'data:image/jpeg;base64,{b64}';
 
-// ── Draw main canvas ─────────────────────────────────────────
 function drawMain() {{
   mCtx.clearRect(0, 0, main.width, main.height);
   if (img.complete && img.naturalWidth)
     mCtx.drawImage(img, 0, 0, main.width, main.height);
 
-  rois.forEach((roi, idx) => {{
-    mCtx.save();                              // ← isolate state per ROI
+  rois.forEach((roi) => {{
+    mCtx.save();
     const {{x0,y0,x1,y1,color,fill,name}} = roi;
     const w = x1-x0, h = y1-y0;
 
-    // Subtle fill
+    // Subtle fill inside box
     mCtx.fillStyle = fill;
     mCtx.fillRect(x0, y0, w, h);
 
-    // Border — bolder when hovered
+    // Border
     mCtx.strokeStyle = color;
-    mCtx.lineWidth = (idx === hovered || idx === (drag && drag.i)) ? 3 : 1.5;
-    mCtx.strokeRect(x0+1, y0+1, w-2, h-2);
+    mCtx.lineWidth = 2;
+    mCtx.strokeRect(x0, y0, w, h);
 
-    // Label pill
+    // Label pill — drawn ABOVE the top edge of the box
     mCtx.font = 'bold 11px sans-serif';
     const tw = mCtx.measureText(name).width + 12;
+    const th = 18;
+    const lx = x0;
+    // Place above box; if too close to top, place inside top edge instead
+    const ly = y0 >= th + 4 ? y0 - th - 2 : y0 + 2;
+    if (mCtx.roundRect) mCtx.roundRect(lx, ly, tw, th, 3);
+    else                 mCtx.rect(lx, ly, tw, th);
     mCtx.fillStyle = color;
-    if (mCtx.roundRect) mCtx.roundRect(x0+4, y0+4, tw, 18, 3);
-    else                 mCtx.rect(x0+4, y0+4, tw, 18);
     mCtx.fill();
     mCtx.fillStyle = '#fff';
-    mCtx.fillText(name, x0+6, y0+17);
+    mCtx.fillText(name, lx + 6, ly + 13);
 
-    mCtx.restore();                           // ← restore: no alpha bleed
+    mCtx.restore();
   }});
 }}
 
-// ── Zoom popup ───────────────────────────────────────────────
-function showZoom(roiIdx, mouseX, mouseY) {{
-  const roi = rois[roiIdx];
-  const rw = roi.x1-roi.x0, rh = roi.y1-roi.y0;
-  if (rw<=0 || rh<=0) return;
-
-  // Size zoom canvas keeping aspect ratio
-  const aspect = rw/rh;
-  let zw, zh;
-  if (aspect >= 1) {{ zw=ZOOM_SIZE; zh=Math.round(ZOOM_SIZE/aspect); }}
-  else             {{ zh=ZOOM_SIZE; zw=Math.round(ZOOM_SIZE*aspect); }}
-  zc.width=zw; zc.height=zh;
-
-  zCtx.imageSmoothingEnabled = false;
-  zCtx.clearRect(0,0,zw,zh);
-  zCtx.drawImage(img, roi.x0, roi.y0, rw, rh, 0, 0, zw, zh);
-
-  const origW=Math.round(rw*INV_X), origH=Math.round(rh*INV_Y);
-  const zoom=(zw/rw).toFixed(1);
-  zlbl.style.color = rois[roiIdx].color;
-  zlbl.textContent = `${{rois[roiIdx].name}}  ${{origW}}×${{origH}} px  ×${{zoom}} zoom`;
-
-  // Position popup: try right of cursor, flip left if near edge
-  const wrap = document.getElementById('wrap');
-  const canvRect = main.getBoundingClientRect();
-  const wrapW = wrap.clientWidth;
-  let px = mouseX + 16;
-  if (px + zw + 20 > wrapW) px = mouseX - zw - 16;
-  let py = mouseY - zh/2;
-  if (py < 0) py = 0;
-  if (py + zh + 24 > main.clientHeight) py = main.clientHeight - zh - 24;
-
-  zpop.style.left   = px + 'px';
-  zpop.style.top    = py + 'px';
-  zpop.style.display = 'block';
-}}
-
-function hideZoom() {{
-  zpop.style.display = 'none';
-}}
-
-// ── Input helpers ────────────────────────────────────────────
 function getPos(e) {{
   const r = main.getBoundingClientRect();
   const sx = main.width/r.width, sy = main.height/r.height;
   const src = e.touches ? e.touches[0] : e;
-  return {{
-    x: (src.clientX-r.left)*sx,
-    y: (src.clientY-r.top)*sy,
-    cx: (src.clientX-r.left),   // css-space x for popup
-    cy: (src.clientY-r.top)
-  }};
+  return {{ x:(src.clientX-r.left)*sx, y:(src.clientY-r.top)*sy }};
 }}
 
 function hitTest(x,y) {{
@@ -1036,7 +950,6 @@ function hitTest(x,y) {{
   return -1;
 }}
 
-// ── Drag ────────────────────────────────────────────────────
 function onDown(e) {{
   const p=getPos(e), i=hitTest(p.x,p.y);
   if (i<0) return;
@@ -1044,27 +957,21 @@ function onDown(e) {{
   drag={{i, sx:p.x, sy:p.y,
          ox0:roi.x0, oy0:roi.y0, ox1:roi.x1, oy1:roi.y1}};
   main.style.cursor='grabbing';
-  hideZoom();
   e.preventDefault();
 }}
 
 function onMove(e) {{
   const p=getPos(e);
   if (!drag) {{
-    const i=hitTest(p.x,p.y);
-    if (i !== hovered) {{ hovered=i; drawMain(); }}
-    main.style.cursor = i>=0 ? 'grab' : 'default';
-    if (i>=0) showZoom(i, p.cx, p.cy);
-    else      hideZoom();
+    main.style.cursor = hitTest(p.x,p.y)>=0 ? 'grab' : 'default';
     return;
   }}
-  // Dragging
   const dx=p.x-drag.sx, dy=p.y-drag.sy;
   const roi=rois[drag.i];
   const W=main.width, H=main.height;
   const w=drag.ox1-drag.ox0, h=drag.oy1-drag.oy0;
-  roi.x0=Math.round(Math.max(0,    Math.min(W-w, drag.ox0+dx)));
-  roi.y0=Math.round(Math.max(0,    Math.min(H-h, drag.oy0+dy)));
+  roi.x0=Math.round(Math.max(0, Math.min(W-w, drag.ox0+dx)));
+  roi.y0=Math.round(Math.max(0, Math.min(H-h, drag.oy0+dy)));
   roi.x1=roi.x0+w; roi.y1=roi.y0+h;
   drawMain();
   updateStatus();
@@ -1078,16 +985,15 @@ function onUp() {{
   pushToParent();
 }}
 
-// ── Status bar ───────────────────────────────────────────────
 function toOrig(v,inv) {{ return Math.round(v*inv); }}
+
 function updateStatus() {{
   const r1=rois[0], r2=rois[1];
   document.getElementById('status').textContent =
     `🔵 (${{toOrig(r1.x0,INV_X)}},${{toOrig(r1.y0,INV_Y)}})→(${{toOrig(r1.x1,INV_X)}},${{toOrig(r1.y1,INV_Y)}})  ` +
-    `🟠 (${{toOrig(r2.x0,INV_X)}},${{toOrig(r2.y0,INV_Y)}})→(${{toOrig(r2.x1,INV_X)}},${{toOrig(r2.y1,INV_Y)}})  ← drag then Apply`;
+    `🟠 (${{toOrig(r2.x0,INV_X)}},${{toOrig(r2.y0,INV_Y)}})→(${{toOrig(r2.x1,INV_X)}},${{toOrig(r2.y1,INV_Y)}})  ← Apply ↑`;
 }}
 
-// ── Sync back to Streamlit ───────────────────────────────────
 function pushToParent() {{
   try {{
     const url=new URL(window.parent.location.href);
@@ -1105,12 +1011,51 @@ function pushToParent() {{
 main.addEventListener('mousedown',  onDown);
 main.addEventListener('mousemove',  onMove);
 main.addEventListener('mouseup',    onUp);
-main.addEventListener('mouseleave', ()=>{{ onUp(); hideZoom(); hovered=-1; drawMain(); }});
+main.addEventListener('mouseleave', onUp);
 main.addEventListener('touchstart', onDown, {{passive:false}});
 main.addEventListener('touchmove',  onMove, {{passive:false}});
 main.addEventListener('touchend',   onUp);
 </script></body></html>"""
-        st.components.v1.html(canvas_html, height=canvas_h + 28, scrolling=False)
+        st.components.v1.html(canvas_html, height=canvas_h + 26, scrolling=False)
+
+    # ── On-demand full-resolution pixel inspection ──
+    st.markdown("#### 🔍 Inspect ROI pixels (full resolution)")
+    st.caption("Crops from the original TIFF resolution — use NEAREST zoom to see individual sensor pixels.")
+    z1, z2 = st.columns(2)
+
+    def make_zoom(arr, roi, max_dim=400):
+        """Crop ROI from full-res array; zoom with NEAREST so pixels stay crisp."""
+        x0,y0,x1,y1 = roi
+        crop = arr[y0:y1, x0:x1]
+        if crop.size == 0:
+            return None, 0
+        ch,cw = crop.shape[:2]
+        factor = max(1, max_dim // max(ch,cw))
+        pil = PILImage.fromarray(crop)
+        zoomed = pil.resize((cw*factor, ch*factor), PILImage.NEAREST)
+        return zoomed, factor
+
+    with z1:
+        if st.button("🔵 View ROI 1 pixels", use_container_width=True):
+            st.session_state['show_zoom1'] = not st.session_state.get('show_zoom1', False)
+        if st.session_state.get('show_zoom1'):
+            zimg, fac = make_zoom(base_rgb, roi1)
+            if zimg:
+                st.image(zimg, use_container_width=True)
+                st.caption(f"Source: {roi1[2]-roi1[0]}×{roi1[3]-roi1[1]} px  |  ×{fac} zoom  |  NEAREST (no blur)")
+            else:
+                st.warning("ROI 1 has zero size.")
+
+    with z2:
+        if st.button("🟠 View ROI 2 pixels", use_container_width=True):
+            st.session_state['show_zoom2'] = not st.session_state.get('show_zoom2', False)
+        if st.session_state.get('show_zoom2'):
+            zimg, fac = make_zoom(base_rgb, roi2)
+            if zimg:
+                st.image(zimg, use_container_width=True)
+                st.caption(f"Source: {roi2[2]-roi2[0]}×{roi2[3]-roi2[1]} px  |  ×{fac} zoom  |  NEAREST (no blur)")
+            else:
+                st.warning("ROI 2 has zero size.")
 
     # ── Coordinate readout ──
     st.markdown(
