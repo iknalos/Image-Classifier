@@ -494,8 +494,30 @@ if st.session_state.step == 0:
     with col_up:
         tab_local, tab_drive = st.tabs(["💻 From Computer","☁️ Google Drive"])
         with tab_local:
-            zf = st.file_uploader("Drop your training ZIP here",
-                                  type=['zip'], label_visibility='collapsed')
+            upload_mode = st.radio("Upload as:", ["📦 ZIP file", "🖼️ Individual TIFFs"],
+                                   horizontal=True, label_visibility='collapsed')
+
+            if upload_mode == "📦 ZIP file":
+                zf = st.file_uploader("Drop your training ZIP here",
+                                      type=['zip'], label_visibility='collapsed')
+            else:
+                tiff_uploads = st.file_uploader("Upload TIFF files",
+                                                type=['tiff','tif'],
+                                                accept_multiple_files=True,
+                                                label_visibility='collapsed')
+                if tiff_uploads:
+                    existing = [f[0] for f in st.session_state.tiff_files]
+                    added = []
+                    for tf in tiff_uploads:
+                        if tf.name not in existing:
+                            st.session_state.tiff_files.append((tf.name, tf.read()))
+                            st.session_state.file_labels[tf.name] = get_label(tf.name)
+                            added.append(tf.name)
+                    if added:
+                        st.success(f"✅ Added {len(added)} file(s)")
+                        st.rerun()
+                zf = None
+
             if not st.session_state.tiff_files and not zf:
                 st.markdown("""
                 <div style='text-align:center;padding:28px 16px;margin-top:4px;
@@ -503,7 +525,7 @@ if st.session_state.step == 0:
                      border:1px dashed rgba(255,255,255,0.07);border-radius:12px'>
                     <div style='font-size:32px;margin-bottom:8px'>📂</div>
                     <div style='font-size:13px;font-weight:600;color:#aaa;margin-bottom:4px'>No files uploaded yet</div>
-                    <div style='font-size:11px;color:#3a3a5c'>Drag & drop a ZIP or click Upload above</div>
+                    <div style='font-size:11px;color:#3a3a5c'>Upload a ZIP or individual TIFF files above</div>
                 </div>""", unsafe_allow_html=True)
         with tab_drive:
             if st.session_state.gdrive_token is None:
