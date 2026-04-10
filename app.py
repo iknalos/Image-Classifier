@@ -816,28 +816,44 @@ elif st.session_state.step == 1:
     inv_x    = W_orig / canvas_w
     inv_y    = H_orig / canvas_h
 
-    # ── Read dragged positions from URL ──
+    # ── Apply dragged positions (always visible) ──
+    # Uses URL query params if replaceState worked; shows button regardless
     qp = st.query_params
     has_drag = 'drag_roi1' in qp and 'drag_roi2' in qp
-    if has_drag:
-        st.info("📍 Boxes moved — click **Apply** to confirm.")
-        if st.button("📍 Apply dragged positions", type="primary", use_container_width=True):
-            try:
-                r1 = list(map(int, qp['drag_roi1'].split(',')))
-                r2 = list(map(int, qp['drag_roi2'].split(',')))
-                def _cl(v,lo,hi): return max(lo,min(hi,v))
-                st.session_state.cx1 = _cl((r1[0]+r1[2])//2, 0, W_orig)
-                st.session_state.cy1 = _cl((r1[1]+r1[3])//2, 0, H_orig)
-                st.session_state.rw1 = _cl(r1[2]-r1[0], 30, min(400,W_orig))
-                st.session_state.rh1 = _cl(r1[3]-r1[1], 30, min(400,H_orig))
-                st.session_state.cx2 = _cl((r2[0]+r2[2])//2, 0, W_orig)
-                st.session_state.cy2 = _cl((r2[1]+r2[3])//2, 0, H_orig)
-                st.session_state.rw2 = _cl(r2[2]-r2[0], 30, min(400,W_orig))
-                st.session_state.rh2 = _cl(r2[3]-r2[1], 30, min(400,H_orig))
-                st.query_params.clear()
-            except Exception as ex:
-                st.error(f"Could not apply: {ex}")
+
+    apply_col, info_col = st.columns([2, 3])
+    with apply_col:
+        apply_clicked = st.button(
+            "📍 Apply canvas positions" if not has_drag else "📍 Apply dragged positions",
+            type="primary", use_container_width=True,
+            help="Click after dragging the boxes on the canvas to sync positions to the sliders"
+        )
+    with info_col:
+        if has_drag:
+            st.info("✅ Drag detected in URL — click Apply to sync.")
+        else:
+            st.caption("💡 Drag boxes on the canvas, then click Apply to sync positions to sliders.")
+
+    if apply_clicked and has_drag:
+        try:
+            r1 = list(map(int, qp['drag_roi1'].split(',')))
+            r2 = list(map(int, qp['drag_roi2'].split(',')))
+            def _cl(v,lo,hi): return max(lo,min(hi,v))
+            st.session_state.cx1 = _cl((r1[0]+r1[2])//2, 0, W_orig)
+            st.session_state.cy1 = _cl((r1[1]+r1[3])//2, 0, H_orig)
+            st.session_state.rw1 = _cl(r1[2]-r1[0], 30, min(400,W_orig))
+            st.session_state.rh1 = _cl(r1[3]-r1[1], 30, min(400,H_orig))
+            st.session_state.cx2 = _cl((r2[0]+r2[2])//2, 0, W_orig)
+            st.session_state.cy2 = _cl((r2[1]+r2[3])//2, 0, H_orig)
+            st.session_state.rw2 = _cl(r2[2]-r2[0], 30, min(400,W_orig))
+            st.session_state.rh2 = _cl(r2[3]-r2[1], 30, min(400,H_orig))
+            st.query_params.clear()
             st.rerun()
+        except Exception as ex:
+            st.error(f"Could not apply dragged positions: {ex}")
+    elif apply_clicked and not has_drag:
+        st.warning("No drag coordinates found in URL. Try dragging a box on the canvas first. "
+                   "If this keeps happening, use the sliders to position the boxes manually.")
 
     st.caption(f"Reference: `{ref_name}`  |  {W_orig}×{H_orig} px")
 
