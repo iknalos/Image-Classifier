@@ -772,7 +772,7 @@ elif st.session_state.step == 1:
 
     st.markdown("""<div class='step-header'>
         <h2>🎯 Step 2 — Select ROI Regions</h2>
-        <p>Drag boxes on the image to position them. Use sliders for fine-tuning.</p>
+        <p>Drag boxes on the image. Click the zoom buttons to inspect pixels at full resolution.</p>
     </div>""", unsafe_allow_html=True)
 
     if not st.session_state.tiff_files:
@@ -841,7 +841,6 @@ elif st.session_state.step == 1:
 
     st.caption(f"Reference: `{ref_name}`  |  {W_orig}×{H_orig} px")
 
-    # ── Layout: sliders left | canvas right ──
     col_sl, col_cv = st.columns([2, 3])
 
     with col_sl:
@@ -864,80 +863,75 @@ elif st.session_state.step == 1:
     sr1 = [_sc(roi1[0],c_scale), _sc(roi1[1],c_scale), _sc(roi1[2],c_scale), _sc(roi1[3],c_scale)]
     sr2 = [_sc(roi2[0],c_scale), _sc(roi2[1],c_scale), _sc(roi2[2],c_scale), _sc(roi2[3],c_scale)]
 
-    # ── Canvas — drag only, label above box, no hover zoom ──
     with col_cv:
+        # ── Canvas: ONLY immediate drawing ops (fillRect / strokeRect / fillText)
+        # ── ZERO path operations → zero accumulation bug
         canvas_html = f"""<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <style>
   *{{margin:0;padding:0;box-sizing:border-box;}}
   body{{background:#0a0a0f;overflow:hidden;}}
-  #main{{display:block;width:100%;cursor:default;}}
-  #status{{
-    font-family:monospace;font-size:11px;color:#555;
-    padding:3px 6px;background:#0d0d14;
-    border-top:1px solid #1a1a28;white-space:nowrap;overflow:hidden;
-  }}
+  #c{{display:block;width:100%;cursor:default;}}
+  #st{{font-family:monospace;font-size:11px;color:#555;
+       padding:3px 6px;background:#0d0d14;
+       border-top:1px solid #1a1a28;white-space:nowrap;overflow:hidden;}}
 </style></head><body>
-<canvas id="main" width="{canvas_w}" height="{canvas_h}"></canvas>
-<div id="status">Drag a box to reposition it • then click Apply above</div>
+<canvas id="c" width="{canvas_w}" height="{canvas_h}"></canvas>
+<div id="st">Drag a box to reposition — then click Apply above</div>
 <script>
 const INV_X={inv_x}, INV_Y={inv_y};
-const main  = document.getElementById('main');
-const mCtx  = main.getContext('2d');
+const cv  = document.getElementById('c');
+const ctx = cv.getContext('2d');
 
+// Each ROI stores canvas-space coords
 let rois = [
-  {{x0:{sr1[0]},y0:{sr1[1]},x1:{sr1[2]},y1:{sr1[3]},
-    color:'#1E90FF', fill:'rgba(30,144,255,0.12)', name:'ROI 1'}},
-  {{x0:{sr2[0]},y0:{sr2[1]},x1:{sr2[2]},y1:{sr2[3]},
-    color:'#FFA500', fill:'rgba(255,165,0,0.12)',   name:'ROI 2'}}
+  {{x0:{sr1[0]},y0:{sr1[1]},x1:{sr1[2]},y1:{sr1[3]},color:'#1E90FF',name:'ROI 1'}},
+  {{x0:{sr2[0]},y0:{sr2[1]},x1:{sr2[2]},y1:{sr2[3]},color:'#FFA500',name:'ROI 2'}}
 ];
-
 let drag = null;
 
 const img = new Image();
-img.onload = () => drawMain();
+img.onload = () => draw();
 img.src = 'data:image/jpeg;base64,{b64}';
 
-function drawMain() {{
-  mCtx.clearRect(0, 0, main.width, main.height);
+// ── Draw: ONLY fillRect / strokeRect / fillText — no path ops ──
+function draw() {{
+  ctx.clearRect(0, 0, cv.width, cv.height);
   if (img.complete && img.naturalWidth)
-    mCtx.drawImage(img, 0, 0, main.width, main.height);
+    ctx.drawImage(img, 0, 0, cv.width, cv.height);
 
-  rois.forEach((roi) => {{
-    mCtx.save();
-    const {{x0,y0,x1,y1,color,fill,name}} = roi;
+  rois.forEach(roi => {{
+    const {{x0,y0,x1,y1,color,name}} = roi;
     const w = x1-x0, h = y1-y0;
 
-    // Subtle fill inside box
-    mCtx.fillStyle = fill;
-    mCtx.fillRect(x0, y0, w, h);
+    // Dashed border — professional style (Spectronon uses marquee outline)
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 2;
+    ctx.setLineDash([6, 3]);
+    ctx.strokeRect(x0, y0, w, h);    // ← immediate, no path state
+    ctx.restore();
 
-    // Border
-    mCtx.strokeStyle = color;
-    mCtx.lineWidth = 2;
-    mCtx.strokeRect(x0, y0, w, h);
-
-    // Label pill — drawn ABOVE the top edge of the box
-    mCtx.font = 'bold 11px sans-serif';
-    const tw = mCtx.measureText(name).width + 12;
-    const th = 18;
+    // Label background — fillRect is immediate, no path involved
+    ctx.font = 'bold 11px sans-serif';
+    const tw = ctx.measureText(name).width + 10;
+    const th = 16;
     const lx = x0;
-    // Place above box; if too close to top, place inside top edge instead
-    const ly = y0 >= th + 4 ? y0 - th - 2 : y0 + 2;
-    if (mCtx.roundRect) mCtx.roundRect(lx, ly, tw, th, 3);
-    else                 mCtx.rect(lx, ly, tw, th);
-    mCtx.fillStyle = color;
-    mCtx.fill();
-    mCtx.fillStyle = '#fff';
-    mCtx.fillText(name, lx + 6, ly + 13);
+    // Place above the box; if box is near top, place just inside
+    const ly = (y0 > th + 3) ? y0 - th - 2 : y0 + 2;
+    ctx.fillStyle = color;
+    ctx.fillRect(lx, ly, tw, th);    // ← immediate, no path state
 
-    mCtx.restore();
+    // Label text
+    ctx.fillStyle = '#fff';
+    ctx.fillText(name, lx + 5, ly + 12);  // ← immediate
   }});
 }}
 
+// ── Input ───────────────────────────────────────────────────
 function getPos(e) {{
-  const r = main.getBoundingClientRect();
-  const sx = main.width/r.width, sy = main.height/r.height;
+  const r  = cv.getBoundingClientRect();
+  const sx = cv.width / r.width, sy = cv.height / r.height;
   const src = e.touches ? e.touches[0] : e;
   return {{ x:(src.clientX-r.left)*sx, y:(src.clientY-r.top)*sy }};
 }}
@@ -953,87 +947,77 @@ function hitTest(x,y) {{
 function onDown(e) {{
   const p=getPos(e), i=hitTest(p.x,p.y);
   if (i<0) return;
-  const roi=rois[i];
-  drag={{i, sx:p.x, sy:p.y,
-         ox0:roi.x0, oy0:roi.y0, ox1:roi.x1, oy1:roi.y1}};
-  main.style.cursor='grabbing';
+  const r=rois[i];
+  drag={{i, sx:p.x, sy:p.y, ox0:r.x0, oy0:r.y0, ox1:r.x1, oy1:r.y1}};
+  cv.style.cursor='grabbing';
   e.preventDefault();
 }}
 
 function onMove(e) {{
   const p=getPos(e);
   if (!drag) {{
-    main.style.cursor = hitTest(p.x,p.y)>=0 ? 'grab' : 'default';
+    cv.style.cursor = hitTest(p.x,p.y)>=0 ? 'grab' : 'default';
     return;
   }}
   const dx=p.x-drag.sx, dy=p.y-drag.sy;
-  const roi=rois[drag.i];
-  const W=main.width, H=main.height;
+  const r=rois[drag.i];
+  const W=cv.width, H=cv.height;
   const w=drag.ox1-drag.ox0, h=drag.oy1-drag.oy0;
-  roi.x0=Math.round(Math.max(0, Math.min(W-w, drag.ox0+dx)));
-  roi.y0=Math.round(Math.max(0, Math.min(H-h, drag.oy0+dy)));
-  roi.x1=roi.x0+w; roi.y1=roi.y0+h;
-  drawMain();
+  r.x0=Math.round(Math.max(0, Math.min(W-w, drag.ox0+dx)));
+  r.y0=Math.round(Math.max(0, Math.min(H-h, drag.oy0+dy)));
+  r.x1=r.x0+w; r.y1=r.y0+h;
+  draw();
   updateStatus();
   e.preventDefault();
 }}
 
 function onUp() {{
   if (!drag) return;
-  drag=null;
-  main.style.cursor='default';
+  drag=null; cv.style.cursor='default';
   pushToParent();
 }}
 
-function toOrig(v,inv) {{ return Math.round(v*inv); }}
+function toO(v,inv) {{ return Math.round(v*inv); }}
 
 function updateStatus() {{
-  const r1=rois[0], r2=rois[1];
-  document.getElementById('status').textContent =
-    `🔵 (${{toOrig(r1.x0,INV_X)}},${{toOrig(r1.y0,INV_Y)}})→(${{toOrig(r1.x1,INV_X)}},${{toOrig(r1.y1,INV_Y)}})  ` +
-    `🟠 (${{toOrig(r2.x0,INV_X)}},${{toOrig(r2.y0,INV_Y)}})→(${{toOrig(r2.x1,INV_X)}},${{toOrig(r2.y1,INV_Y)}})  ← Apply ↑`;
+  const a=rois[0], b=rois[1];
+  document.getElementById('st').textContent =
+    `🔵(${{toO(a.x0,INV_X)}},${{toO(a.y0,INV_Y)}})→(${{toO(a.x1,INV_X)}},${{toO(a.y1,INV_Y)}})  `+
+    `🟠(${{toO(b.x0,INV_X)}},${{toO(b.y0,INV_Y)}})→(${{toO(b.x1,INV_X)}},${{toO(b.y1,INV_Y)}})  ← Apply ↑`;
 }}
 
 function pushToParent() {{
   try {{
     const url=new URL(window.parent.location.href);
-    const r1=rois[0], r2=rois[1];
-    url.searchParams.set('drag_roi1',
-      [toOrig(r1.x0,INV_X),toOrig(r1.y0,INV_Y),
-       toOrig(r1.x1,INV_X),toOrig(r1.y1,INV_Y)].join(','));
-    url.searchParams.set('drag_roi2',
-      [toOrig(r2.x0,INV_X),toOrig(r2.y0,INV_Y),
-       toOrig(r2.x1,INV_X),toOrig(r2.y1,INV_Y)].join(','));
+    const a=rois[0], b=rois[1];
+    url.searchParams.set('drag_roi1',[toO(a.x0,INV_X),toO(a.y0,INV_Y),toO(a.x1,INV_X),toO(a.y1,INV_Y)].join(','));
+    url.searchParams.set('drag_roi2',[toO(b.x0,INV_X),toO(b.y0,INV_Y),toO(b.x1,INV_X),toO(b.y1,INV_Y)].join(','));
     window.parent.history.replaceState({{}},'',url.toString());
-  }} catch(err) {{ console.warn(err); }}
+  }} catch(e) {{ console.warn(e); }}
 }}
 
-main.addEventListener('mousedown',  onDown);
-main.addEventListener('mousemove',  onMove);
-main.addEventListener('mouseup',    onUp);
-main.addEventListener('mouseleave', onUp);
-main.addEventListener('touchstart', onDown, {{passive:false}});
-main.addEventListener('touchmove',  onMove, {{passive:false}});
-main.addEventListener('touchend',   onUp);
+cv.addEventListener('mousedown',  onDown);
+cv.addEventListener('mousemove',  onMove);
+cv.addEventListener('mouseup',    onUp);
+cv.addEventListener('mouseleave', onUp);
+cv.addEventListener('touchstart', onDown, {{passive:false}});
+cv.addEventListener('touchmove',  onMove, {{passive:false}});
+cv.addEventListener('touchend',   onUp);
 </script></body></html>"""
         st.components.v1.html(canvas_html, height=canvas_h + 26, scrolling=False)
 
-    # ── On-demand full-resolution pixel inspection ──
-    st.markdown("#### 🔍 Inspect ROI pixels (full resolution)")
-    st.caption("Crops from the original TIFF resolution — use NEAREST zoom to see individual sensor pixels.")
+    # ── Full-resolution pixel inspection (on demand) ──
+    st.markdown("#### 🔍 Full-resolution pixel zoom")
+    st.caption("Crops from original TIFF resolution — NEAREST interpolation keeps pixels crisp.")
     z1, z2 = st.columns(2)
 
     def make_zoom(arr, roi, max_dim=400):
-        """Crop ROI from full-res array; zoom with NEAREST so pixels stay crisp."""
         x0,y0,x1,y1 = roi
         crop = arr[y0:y1, x0:x1]
-        if crop.size == 0:
-            return None, 0
+        if crop.size == 0: return None, 0
         ch,cw = crop.shape[:2]
         factor = max(1, max_dim // max(ch,cw))
-        pil = PILImage.fromarray(crop)
-        zoomed = pil.resize((cw*factor, ch*factor), PILImage.NEAREST)
-        return zoomed, factor
+        return PILImage.fromarray(crop).resize((cw*factor, ch*factor), PILImage.NEAREST), factor
 
     with z1:
         if st.button("🔵 View ROI 1 pixels", use_container_width=True):
@@ -1042,9 +1026,7 @@ main.addEventListener('touchend',   onUp);
             zimg, fac = make_zoom(base_rgb, roi1)
             if zimg:
                 st.image(zimg, use_container_width=True)
-                st.caption(f"Source: {roi1[2]-roi1[0]}×{roi1[3]-roi1[1]} px  |  ×{fac} zoom  |  NEAREST (no blur)")
-            else:
-                st.warning("ROI 1 has zero size.")
+                st.caption(f"{roi1[2]-roi1[0]}×{roi1[3]-roi1[1]} px source  |  ×{fac} zoom")
 
     with z2:
         if st.button("🟠 View ROI 2 pixels", use_container_width=True):
@@ -1053,20 +1035,16 @@ main.addEventListener('touchend',   onUp);
             zimg, fac = make_zoom(base_rgb, roi2)
             if zimg:
                 st.image(zimg, use_container_width=True)
-                st.caption(f"Source: {roi2[2]-roi2[0]}×{roi2[3]-roi2[1]} px  |  ×{fac} zoom  |  NEAREST (no blur)")
-            else:
-                st.warning("ROI 2 has zero size.")
+                st.caption(f"{roi2[2]-roi2[0]}×{roi2[3]-roi2[1]} px source  |  ×{fac} zoom")
 
     # ── Coordinate readout ──
     st.markdown(
         f"<div style='background:#0d1117;border:1px solid #30363d;border-radius:8px;"
         f"padding:10px 16px;margin:6px 0;font-size:13px'>"
-        f"<b style='color:#1E90FF'>ROI 1:</b> "
-        f"({roi1[0]}, {roi1[1]}) → ({roi1[2]}, {roi1[3]}) &nbsp;|&nbsp; "
-        f"{roi1[2]-roi1[0]}×{roi1[3]-roi1[1]} px"
-        f"&emsp;<b style='color:#FFA500'>ROI 2:</b> "
-        f"({roi2[0]}, {roi2[1]}) → ({roi2[2]}, {roi2[3]}) &nbsp;|&nbsp; "
-        f"{roi2[2]-roi2[0]}×{roi2[3]-roi2[1]} px"
+        f"<b style='color:#1E90FF'>ROI 1:</b> ({roi1[0]}, {roi1[1]}) → ({roi1[2]}, {roi1[3]})"
+        f" &nbsp;|&nbsp; {roi1[2]-roi1[0]}×{roi1[3]-roi1[1]} px"
+        f"&emsp;<b style='color:#FFA500'>ROI 2:</b> ({roi2[0]}, {roi2[1]}) → ({roi2[2]}, {roi2[3]})"
+        f" &nbsp;|&nbsp; {roi2[2]-roi2[0]}×{roi2[3]-roi2[1]} px"
         f"</div>", unsafe_allow_html=True)
 
     if st.button("✅ Confirm ROIs & Go to Training →",
