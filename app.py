@@ -1184,11 +1184,17 @@ elif st.session_state.step == 2:
                 clf_name = "SVM RBF (XGBoost unavailable)"
 
         model = Pipeline([('scaler',StandardScaler()),('clf',clf)])
-        prog.progress((img_id+1)/(img_id+2), text=f"Running cross-validation ({img_id}-fold)...")
-        cv_obj  = GroupKFold(n_splits=img_id)
-        y_pred  = cross_val_predict(model, X, y, cv=cv_obj, groups=groups)
 
-        prog.progress(1.0, text="Fitting final model...")
+        # ── CV uses a fast SVM only (avoids 54 heavy fits for ensemble) ──
+        # Full ensemble is fitted on ALL data below for actual predictions.
+        prog.progress((img_id+1)/(img_id+2), text=f"Cross-validation ({img_id}-fold, fast SVM)...")
+        cv_obj     = GroupKFold(n_splits=img_id)
+        fast_cv    = Pipeline([('scaler', StandardScaler()),
+                               ('clf',   SVC(kernel='rbf', C=10, gamma='scale',
+                                             probability=False, random_state=42))])
+        y_pred = cross_val_predict(fast_cv, X, y, cv=cv_obj, groups=groups, n_jobs=-1)
+
+        prog.progress(1.0, text=f"Fitting final {clf_name} on all data...")
         model.fit(X, y)
 
         # ── Store everything in session state so tabs render on rerun ──
